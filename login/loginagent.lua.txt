@@ -116,9 +116,12 @@ function REQUEST:heartbeat()
 
 end
 
-function REQUEST:get(what)
-    print("REQUEST:get", what)
-    return "I get "..what
+function REQUEST:get(data)
+    if data then
+        print("REQUEST:get", data.what)
+        return {result = "I get "..tostring(data.what)}
+    end
+    return {result = "get error"}
 end
 
 local RESPONSE = {}
