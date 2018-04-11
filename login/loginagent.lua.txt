@@ -132,6 +132,7 @@ local function send_package(fd, pack)
 end
 
 local function _request(name, args, response)
+    print("_request:", name, args, response)
     local f = assert(REQUEST[name])
     local r = f(args)
     if response then
