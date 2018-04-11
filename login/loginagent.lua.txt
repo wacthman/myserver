@@ -162,7 +162,7 @@ function init(client, gate, snaxhanle, snaxtype, ...)
                 local ok, result  = pcall(_request, ...)
                 if ok then
                     if result then
-                        send_package(result)
+                        send_package(fd, result)
                     end
                 else
                     skynet.error(result)
