@@ -1,0 +1,84 @@
+local skynet = require "skynet"
+local snax = require "skynet.snax"
+local sprotoloader = require "sprotoloader"
+local netpack = require "compat10.netpack"
+local socket = require "skynet.socket"
+
+local websocket = require "websocket.websocket"
+local httpd = require "http.httpd"
+local sockethelper = require "http.sockethelper"
+
+local clients = {}
+
+local host
+
+skynet.register_protocol {
+    name = "client",
+    id = skynet.PTYPE_CLIENT,
+    unpack = function (msg, sz)
+        print("service unpack:", msg, sz)
+        return host:dispatch(msg, sz)
+    end,
+    dispatch = function (_, _, type, ...)
+        print("service dispatch:", type, ...)
+    end
+}
+
+local function send_package(fd, pack)
+    local package = string.pack(">s2", pack)
+    socket.write(fd, package)
+end
+
+local wshandler = {}
+
+function wshandler.on_open(ws)
+    if clients[ws.id] ~= nil then
+        clients[ws.id].ws = ws
+        print("server 有新连接:", ws, clients[ws.id].addr)
+    else
+        print("server 有新连接: error")
+    end
+
+    --[[
+    host = sprotoloader.load(1):host "package"
+    send_request = host:attach(sprotoloader.load(2))
+    skynet.fork(function(fd)
+        while true do
+            send_package(fd, send_request "heartbeat")
+            skynet.sleep(500)
+        end
+    end, fd)
+    --]]
+end
+
+function wshandler.on_message(ws, message)
+    print("server 收到数据:", ws)
+    ws:send_text(message)
+end
+
+function wshandler.on_close(ws, code, reason)
+    clients[ws.id] = nil
+    print("server 连接关闭:", ws)
+end
+
+local function handle_socket(id)
+    -- limit request body size to 8192 (you can pass nil to unlimit)
+    local code, url, method, header, body = httpd.read_request(sockethelper.readfunc(id), nil)
+    if code then
+        if header.upgrade == "websocket" then
+            local ws = websocket.new(id, header, wshandler)
+            ws:start()
+        end
+    end
+end
+
+skynet.start(function()
+    local address = "0.0.0.0:20013"
+    skynet.error("Listening "..address)
+    local id = assert(socket.listen(address))
+    socket.start(id , function(id, addr)
+        socket.start(id)
+        clients[id] = { ws = nil, addr = addr }
+        pcall(handle_socket, id)
+    end)
+end)

@@ -1,0 +1,125 @@
+--[[
+登录服：
+对外公开，接收玩家登录
+登录成功后，返回大厅服的ip和端口
+--]]
+
+local skynet = require "skynet"
+local snax = require "skynet.snax"
+local mysql = require "skynet.db.mysql"
+local utils = require "utils"
+local dbhelper = require "login.logindbhelper"
+
+local mydb
+local gate
+
+local clients = {}
+
+local SOCKET = {}
+
+local function close_agent(fd)
+    local a = clients[fd]
+    clients[fd] = nil
+    if a then
+        skynet.call(gate, "lua", "kick", fd)
+        a.agent.post.disconnect()
+    end
+end
+
+function SOCKET.open(fd, addr)
+    clients[fd] = { fd = fd, addr = addr }
+    local my = snax.self()
+    local agent = snax.newservice("login/loginagent", clients[fd],
+            gate, my.handle, my.type)
+    clients[fd].agent = agent
+end
+
+function SOCKET.close(fd)
+    close_agent(fd)
+end
+
+function SOCKET.data(fd, msg)
+end
+
+function SOCKET.error(fd, msg)
+    close_agent(fd)
+end
+
+function SOCKET.warning(fd, size)
+end
+
+function accept.closeagent(fd)
+    close_agent(fd)
+end
+
+function response.db_selectaccount(account)
+    return dbhelper.selectAccount(mydb, account)
+end
+
+function init(...)
+    skynet.dispatch("lua", function(session, source, cmd, subcmd, ...)
+        if cmd == "socket" then
+            local f = SOCKET[subcmd]
+            if f then
+                f(...)
+            end
+        else
+            skynet.error("server unkown cmd:", subcmd, ...)
+        end
+    end)
+
+    ---初始化gate
+    gate = skynet.newservice("gate")
+
+
+    ---初始化db
+    local function on_connect(db)
+        mydb = db;
+        print("on_connect:", db)
+        local res = mydb:query("set charset utf8")
+        print("res:", utils.dump(res))
+
+        res = mydb:query([[CREATE TABLE IF NOT EXISTS `PlayerInfo`(
+`account` VARCHAR(255) NOT NULL unique,
+`index` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+`password` VARCHAR(255),
+`platform` VARCHAR(255),
+`channel` VARCHAR(255),
+`time_create` DATETIME,
+`time_lastlogin` DATETIME,
+`id` BIGINT UNSIGNED,
+`name` VARCHAR(255),
+`sex` TINYINT UNSIGNED,
+`gold` BIGINT UNSIGNED,
+`diamond` BIGINT UNSIGNED,
+PRIMARY KEY(`index`)
+)ENGINE=InnoDB DEFAULT CHARSET=utf8;]])
+        print("res:", utils.dump(res))
+
+        ---数据库初始化成功后开启gate
+        skynet.call(gate, "lua", "open", {
+            port = 20013,
+            maxclient = 1024,
+            nodelay = true,
+        })
+    end
+
+    mysql.connect({
+        host = "127.0.0.1",
+        port = 3306,
+        database = "zdcgame",
+        user = "zhaiduchi",
+        password = "qq14961496",
+        max_paclet_size = 1024 * 1024,
+        on_connect = on_connect
+    })
+end
+
+function exit(...)
+    skynet.kill(gate)
+    gate = nil
+    for k, _ in pairs(clients) do
+        close_agent(k)
+    end
+    clients = nil
+end

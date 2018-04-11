@@ -1,0 +1,90 @@
+local login = {}
+local utils = require "utils"
+local errorcode = require "login.loginerrorcode"
+local crypt = require "skynet.crypt"
+
+local des_key = "zdcgameq"
+local password_key = "zdcgameq"
+
+---检查版本
+function login.ContrastVersion(clientlargever, clientsmallver, serlargever, sersmallver)
+    local temp1 = tonumber(clientlargever)
+    local temp2 = tonumber(clientsmallver)
+    local temp3 = tonumber(serlargever)
+    local temp4 = tonumber(sersmallver)
+
+    if ((temp1 >= temp3) and (temp2 >= temp4)) then
+        return errorcode["成功"]
+    elseif (temp3 > temp1) then
+        return errorcode["大版本需要更新"]
+    elseif (temp4 > temp2) then
+        return errorcode["小版本需要更新"]
+    else
+        return errorcode["大版本和小版本都需要更新"]
+    end
+end
+
+---获取password   des(key, sha1(password))，其中sha1(password)由客户端完成
+function login.GetPassword(pwd)
+    return crypt.desencode(password_key, pwd)
+end
+
+---计算token
+function login.GetToken(account, password, ip, clientid)
+    local token = {}
+    token.account = account
+    token.password = password
+    token.ip = ip
+    token.clientid = clientid
+    token.time = os.time()
+
+    local signature = utils.Table2String(token)
+    ---加密signature
+    token.signature = crypt.desencode(des_key, signature)
+
+    local str = utils.Table2String(token)
+    ---BASE64 str
+    str = crypt.base64encode(str)
+
+    return str
+end
+
+---验证token
+function login.VerificationToken(token, addr)
+    ---BASE64
+    local str = crypt.base64decode(token)
+
+    local temp = utils.String2Table(str)
+    local account = temp.account
+    local password = temp.password
+    local ip = temp.ip
+    local clientid = temp.clientid
+    local signature = temp.signature
+    local time = temp.time
+
+    if ip ~= addr then
+        return errorcode["token验证的ip与数据的ip不符合"]
+    end
+
+    ---解密signature
+    local temp2 = crypt.desdecode(des_key, signature)
+
+    ---判断数据是否正确
+    local temp3 = utils.String2Table(temp2)
+    if temp3.account == account and
+            temp3.password == password and
+            temp3.ip == ip and
+            temp3.clientid == clientid and
+            temp3.time == time
+    then
+        local diff = os.difftime(os.time(), temp3.time)
+        if diff > 120 then
+            return errorcode["token超时"]
+        else
+            return errorcode["成功"]
+        end
+    end
+    return errorcode["token验证失败"]
+end
+
+return login

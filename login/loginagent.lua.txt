@@ -1,0 +1,202 @@
+local skynet = require "skynet"
+local socket = require "skynet.socket"
+local snax = require("skynet.snax")
+local sprotoloader = require "sprotoloader"
+local utils = require("utils")
+local config = require("login.loginconfig")
+local login = require("login.login")
+local loginerrorcode = require("login.loginerrorcode")
+local crypt = require "skynet.crypt"
+
+local host
+local send_request
+local fd
+local addr
+local logingate
+local loginservice
+local handshaketimeout
+local logintimeout
+local playerinfo
+local logininfo
+
+local REQUEST = {}
+
+function REQUEST:handshake()
+    if handshaketimeout then
+        handshaketimeout()
+        handshaketimeout = nil
+    end
+
+    if not logintimeout then
+        local code = login.ContrastVersion(self.largeversion, self.smallversion,
+                config.largeversion, config.smallversion)
+        if code ~= loginerrorcode["成功"] then
+            ---握手失败1秒后踢出
+            if logintimeout then
+                logintimeout()
+                logintimeout = nil
+            end
+            utils.timeout(100, function ()
+                loginservice.post.closeagent(fd)
+            end)
+        else
+            ---握手成功后10秒没有登录就踢出
+            logintimeout = utils.cancelable_timeout(1000, function ()
+                loginservice.post.closeagent(fd)
+            end)
+        end
+        return { code = code,
+                 largeversion = config.largeversion,
+                 smallversion = config.smallversion }
+    else
+        logintimeout()
+        logintimeout = nil
+        utils.timeout(100, function ()
+            loginservice.post.closeagent(fd)
+        end)
+        return { code = loginerrorcode["登录流程颠倒"],
+                 largeversion = config.largeversion,
+                 smallversion = config.smallversion }
+    end
+end
+
+function REQUEST:login()
+    if handshaketimeout then
+        ---没有握手，1秒后踢出
+        handshaketimeout()
+        handshaketimeout = nil
+        utils.timeout(100, function ()
+            loginservice.post.closeagent(fd)
+        end)
+        return { code = loginerrorcode["登录流程颠倒"] }
+    end
+
+    playerinfo = nil
+    logininfo = nil
+
+    local account = crypt.base64decode(self.account)
+    local password = crypt.base64decode(self.password)
+    local platform = crypt.base64decode(self.platform)
+    local channel = crypt.base64decode(self.channel)
+    local clientid = crypt.base64decode(self.clientid)
+    local external = crypt.base64decode(self.external)
+
+    local res = loginservice.req.db_selectaccount(account)
+    if  res and #res > 0 then
+        if password and
+                login.GetPassword(password) == res[1].password then
+            if logintimeout then
+                logintimeout()
+                logintimeout = nil
+            end
+            playerinfo = res[1]
+            logininfo = {
+                account = account,
+                platform = platform,
+                channel = channel,
+                clientid = clientid,
+                external = external
+            }
+            return {
+                code = 0,
+                token = login.GetToken(account,
+                        password, addr, clientid),
+                gameip = "101.132.77.100",
+                gameport = 20013,
+            }
+        else
+            return { code = loginerrorcode["密码错误"] }
+        end
+    else
+        return { code = loginerrorcode["无此帐号"] }
+    end
+end
+
+function REQUEST:heartbeat()
+
+end
+
+local RESPONSE = {}
+
+local function send_package(fd, pack)
+    local package = string.pack(">s2", pack)
+    socket.write(fd, package)
+end
+
+local function _request(name, args, response)
+    local f = assert(REQUEST[name])
+    local r = f(args)
+    if response then
+        return response(r)
+    end
+end
+
+local function _response(session, args)
+    local f = assert(RESPONSE[session])
+    f(args)
+end
+
+function accept.disconnect()
+    snax.exit()
+end
+
+function init(client, gate, snaxhanle, snaxtype, ...)
+    skynet.register_protocol {
+        name = "client",
+        id = skynet.PTYPE_CLIENT,
+        unpack = function (msg, sz)
+            print("service unpack:", msg, sz)
+            return host:dispatch(msg, sz)
+        end,
+        dispatch = function (_, _, type, ...)
+            print("service dispatch:", type, ...)
+            if type == "REQUEST" then
+                local ok, result  = pcall(_request, ...)
+                if ok then
+                    if result then
+                        send_package(result)
+                    end
+                else
+                    skynet.error(result)
+                end
+            else
+                local ok, result  = pcall(_response, ...)
+                if not ok then
+                    skynet.error(result)
+                end
+            end
+        end
+    }
+
+    fd = client.fd
+    addr = client.addr
+    logingate = gate
+    loginservice = snax.bind(snaxhanle, snaxtype)
+    host = sprotoloader.load(1):host "package"
+    send_request = host:attach(sprotoloader.load(2))
+    ---10秒没有握手就踢出
+    handshaketimeout = utils.cancelable_timeout(1000, function ()
+        loginservice.post.closeagent(fd)
+    end)
+
+    skynet.call(logingate, "lua", "forward", fd)
+end
+
+function exit(...)
+    host = nil
+    send_request = nil
+    fd = nil
+    addr = nil
+    logingate = nil
+    loginservice = nil
+    playerinfo = nil
+    logininfo = nil
+    if handshaketimeout then
+        handshaketimeout()
+        handshaketimeout = nil
+    end
+    if logintimeout then
+        logintimeout()
+        logintimeout = nil
+    end
+end

@@ -1,0 +1,9 @@
+local dbhelper = {}
+
+function dbhelper.selectAccount(db, account)
+    local sql = string.format(
+            "select * from PlayerInfo where account='%s'", account)
+    return db:query(sql)
+end
+
+return dbhelper

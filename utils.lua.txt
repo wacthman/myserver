@@ -1,0 +1,119 @@
+local utils = {}
+local skynet = require("skynet")
+
+function utils.dump(obj)
+    local getIndent, quoteStr, wrapKey, wrapVal, dumpObj
+    getIndent = function(level)
+        return string.rep("\t", level)
+    end
+    quoteStr = function(str)
+        return '"' .. string.gsub(str, '"', '\\"') .. '"'
+    end
+    wrapKey = function(val)
+        if type(val) == "number" then
+            return "[" .. val .. "]"
+        elseif type(val) == "string" then
+            return "[" .. quoteStr(val) .. "]"
+        else
+            return "[" .. tostring(val) .. "]"
+        end
+    end
+    wrapVal = function(val, level)
+        if type(val) == "table" then
+            return dumpObj(val, level)
+        elseif type(val) == "number" then
+            return val
+        elseif type(val) == "string" then
+            return quoteStr(val)
+        else
+            return tostring(val)
+        end
+    end
+    dumpObj = function(obj, level)
+        if type(obj) ~= "table" then
+            return wrapVal(obj)
+        end
+        level = level + 1
+        local tokens = {}
+        tokens[#tokens + 1] = "{"
+        for k, v in pairs(obj) do
+            tokens[#tokens + 1] = getIndent(level) .. wrapKey(k) .. " = " .. wrapVal(v, level) .. ","
+        end
+        tokens[#tokens + 1] = getIndent(level - 1) .. "}"
+        return table.concat(tokens, "\n")
+    end
+    return dumpObj(obj, 0)
+end
+
+local function ToStringEx(value)
+    if type(value)=='table' then
+        return utils.Table2String(value)
+    elseif type(value)=='string' then
+        return "\'"..value.."\'"
+    else
+        return tostring(value)
+    end
+end
+
+function utils.Table2String(t)
+    if t == nil then return "" end
+    local retstr= "{"
+
+    local i = 1
+    for key,value in pairs(t) do
+        local signal = ","
+        if i==1 then
+            signal = ""
+        end
+
+        if key == i then
+            retstr = retstr..signal..ToStringEx(value)
+        else
+            if type(key)=='number' or type(key) == 'string' then
+                retstr = retstr..signal..'['..ToStringEx(key).."]="..ToStringEx(value)
+            else
+                if type(key)=='userdata' then
+                    retstr = retstr..signal.."*s"..utils.Table2String(getmetatable(key)).."*e".."="..ToStringEx(value)
+                else
+                    retstr = retstr..signal..key.."="..ToStringEx(value)
+                end
+            end
+        end
+
+        i = i+1
+    end
+
+    retstr = retstr.."}"
+    return retstr
+end
+
+function utils.String2Table(s)
+    if s == nil or type(s) ~= "string" then
+        return
+    end
+    local ok, result = pcall(loadstring("return " .. s))
+    if ok then
+        return result
+    else
+        return nil
+    end
+end
+
+function utils.cancelable_timeout(time, func)
+    local function cb()
+        if func then
+            func()
+        end
+    end
+    local function cancel()
+        func = nil
+    end
+    skynet.timeout(time, cb)
+    return cancel
+end
+
+function utils.timeout(time, func)
+    skynet.timeout(time, func)
+end
+
+return utils

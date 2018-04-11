@@ -1,0 +1,6 @@
+local config = {}
+
+config.largeversion = "1.0"
+config.smallversion = "1.0"
+
+return config

@@ -1,0 +1,59 @@
+local skynet = require "skynet"
+local snax = require "skynet.snax"
+
+skynet.start(function()
+	print("======main server start=======")
+
+	--[[
+	local myservice = skynet.newservice("myservice")
+
+	print("skynet.self():", skynet.self())
+	--print("skynet.harbor():", skynet.harbor(0))
+
+	print("skynet.call begin")
+	local value = skynet.call(myservice, "lua", "set", "key", "value")
+
+	print("skynet.call end:", value)
+	]]--
+
+	--[[
+	local snaxservice = snax.newservice("snaxservice", "hello!!!")
+
+	print("snaxservice:", snaxservice)
+
+
+	print("snaxservice exit begin:")
+	snaxservice.post.exit("world!!!")
+	print("snaxservice exit end:")
+	--]]
+
+	--local snaxservice = skynet.newservice("wsservice", "hello!!!")
+
+	--local snaxservice = skynet.newservice("httpservice")
+
+	--启动 machineservice
+	local machineservice = snax.uniqueservice("machineservice")
+
+	print("machineservice:", machineservice)
+
+	--启动 loginservicemanager
+	local loginservicemanager = snax.globalservice("loginservicemanager")
+
+	print("loginservicemanager:", loginservicemanager)
+
+	--启动 loginprotomanager
+	local loginprotomanager = snax.uniqueservice("loginprotomanager")
+
+	print("loginprotomanager:", loginprotomanager)
+
+	--启动 hallservicemanager
+	local hallservicemanager = snax.globalservice("hallservicemanager")
+
+	print("hallservicemanager:", hallservicemanager)
+
+	--skynet.sleep(500)
+
+	--snax.kill(machineservice)
+
+	skynet.exit()
+end)
