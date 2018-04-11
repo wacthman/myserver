@@ -8,51 +8,29 @@ loginproto.c2s = sprotoparser.parse [[
 	session 1 : integer
 }
 
-.PlayerInfo {
-    account 0 : string
-    password 1 : string
-    platform 2 : string
-    time_create 3 : string
-    time_lastlogin 4 : string
-    id 5 : integer
-    name 6 : string
-    sex 7 : integer
-    gold 8 : integer
-    diamond 9 : integer
-}
-
 handshake 1 {
-    request {
-        largeversion 0 : string
-        smallversion 1 : string
-    }
 	response {
-		code 0  : integer
-		largeversion 1 : string
-		smallversion 2 : string
+		msg 0  : string
 	}
 }
 
-login 2 {
-    request {
-        account 0 : string
-        password 1 : string
-        platform 2 : string
-        channel 3 : string
-        clientid 4 : string
-        external 5 : string
-    }
-    response {
-        code 0  : integer
-        token 1 : string
-        gameip 2 : string
-        gameport 3 : integer
-    }
+get 2 {
+	request {
+		what 0 : string
+	}
+	response {
+		result 0 : string
+	}
 }
 
-heartbeat 3 {
-
+set 3 {
+	request {
+		what 0 : string
+		value 1 : string
+	}
 }
+
+quit 4 {}
 
 ]]
 
@@ -62,6 +40,7 @@ loginproto.s2c = sprotoparser.parse [[
 	session 1 : integer
 }
 
+heartbeat 1 {}
 ]]
 
 return loginproto

@@ -116,6 +116,11 @@ function REQUEST:heartbeat()
 
 end
 
+function REQUEST:get(what)
+    print("REQUEST:get", what)
+    return "I get "..what
+end
+
 local RESPONSE = {}
 
 local function send_package(fd, pack)
@@ -174,10 +179,13 @@ function init(client, gate, snaxhanle, snaxtype, ...)
     loginservice = snax.bind(snaxhanle, snaxtype)
     host = sprotoloader.load(1):host "package"
     send_request = host:attach(sprotoloader.load(2))
+
+    --[[
     ---10秒没有握手就踢出
     handshaketimeout = utils.cancelable_timeout(1000, function ()
         loginservice.post.closeagent(fd)
     end)
+    --]]
 
     skynet.call(logingate, "lua", "forward", fd)
 end
