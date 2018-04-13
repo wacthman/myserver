@@ -118,10 +118,13 @@ function REQUEST:heartbeat()
             self and self.what or "nil")}
 end
 
-local RESPONSE = {}
-function RESPONSE:hello()
-    print("RESPONSE:hello:", self and self.msg or nil)
+function REQUEST:hello()
+    print("REQUEST:hello:", self and self.msg or nil)
+    return {msg = "server vesion:0.0.1"}
 end
+
+local RESPONSE = {}
+
 
 local function send_package(fd, pack)
     local package = string.pack(">s2", pack)
