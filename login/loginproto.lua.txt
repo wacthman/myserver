@@ -1,20 +1,20 @@
 local sprotoparser = require "sprotoparser"
 
-local loginproto = {}
+local proto = {}
 
-loginproto.c2s = sprotoparser.parse [[
+proto.c2s = sprotoparser.parse [[
 .package {
 	type 0 : integer
 	session 1 : integer
 }
 
-handshake 1 {
+hello 1 {
 	response {
 		msg 0  : string
 	}
 }
 
-get 2 {
+heartbeat 2 {
 	request {
 		what 0 : string
 	}
@@ -23,24 +23,23 @@ get 2 {
 	}
 }
 
-set 3 {
-	request {
-		what 0 : string
-		value 1 : string
-	}
-}
-
-quit 4 {}
+quit 3 {}
 
 ]]
 
-loginproto.s2c = sprotoparser.parse [[
+proto.s2c = sprotoparser.parse [[
 .package {
 	type 0 : integer
 	session 1 : integer
 }
 
-heartbeat 1 {}
+set 1 {
+	request {
+		key 0 : string
+		value 1 : string
+	}
+}
+
 ]]
 
-return loginproto
+return proto

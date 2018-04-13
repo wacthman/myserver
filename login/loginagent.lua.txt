@@ -113,15 +113,15 @@ function REQUEST:login()
 end
 
 function REQUEST:heartbeat()
-
-end
-
-function REQUEST:get(data)
-    print("REQUEST:get", self.what)
-    return {result = "I get "..self.what}
+    print("RESPONSE:hello:", self and self.what or nil)
+    return {result = string.format("I get:%s",
+            self and self.what or "nil")}
 end
 
 local RESPONSE = {}
+function RESPONSE:hello()
+    print("RESPONSE:hello:", self and self.msg or nil)
+end
 
 local function send_package(fd, pack)
     local package = string.pack(">s2", pack)
@@ -165,7 +165,7 @@ function init(client, gate, snaxhanle, snaxtype, ...)
                 else
                     skynet.error(result)
                 end
-            else
+            elseif type == "response" then
                 local ok, result  = pcall(_response, ...)
                 if not ok then
                     skynet.error(result)
