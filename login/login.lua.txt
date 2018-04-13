@@ -1,90 +1,145 @@
 local login = {}
 local utils = require "utils"
 local errorcode = require "login.loginerrorcode"
+local config = require("login.loginconfig")
+local loginUtils = require("login.loginutils")
 local crypt = require "skynet.crypt"
 
-local des_key = "zdcgameq"
-local password_key = "zdcgameq"
+local handshaketimeout
+local logintimeout
+local playerinfo
+local logininfo
+local agent
 
----检查版本
-function login.ContrastVersion(clientlargever, clientsmallver, serlargever, sersmallver)
-    local temp1 = tonumber(clientlargever)
-    local temp2 = tonumber(clientsmallver)
-    local temp3 = tonumber(serlargever)
-    local temp4 = tonumber(sersmallver)
+function login.join(a)
+    agent = a
+end
 
-    if ((temp1 >= temp3) and (temp2 >= temp4)) then
-        return errorcode["成功"]
-    elseif (temp3 > temp1) then
-        return errorcode["大版本需要更新"]
-    elseif (temp4 > temp2) then
-        return errorcode["小版本需要更新"]
-    else
-        return errorcode["大版本和小版本都需要更新"]
+function login.quit()
+    playerinfo = nil
+    logininfo = nil
+    if handshaketimeout then
+        handshaketimeout()
+        handshaketimeout = nil
+    end
+    if logintimeout then
+        logintimeout()
+        logintimeout = nil
     end
 end
 
----获取password   des(key, sha1(password))，其中sha1(password)由客户端完成
-function login.GetPassword(pwd)
-    return crypt.desencode(password_key, pwd)
-end
+login.REQUEST = {}
 
----计算token
-function login.GetToken(account, password, ip, clientid)
-    local token = {}
-    token.account = account
-    token.password = password
-    token.ip = ip
-    token.clientid = clientid
-    token.time = os.time()
-
-    local signature = utils.Table2String(token)
-    ---加密signature
-    token.signature = crypt.desencode(des_key, signature)
-
-    local str = utils.Table2String(token)
-    ---BASE64 str
-    str = crypt.base64encode(str)
-
-    return str
-end
-
----验证token
-function login.VerificationToken(token, addr)
-    ---BASE64
-    local str = crypt.base64decode(token)
-
-    local temp = utils.String2Table(str)
-    local account = temp.account
-    local password = temp.password
-    local ip = temp.ip
-    local clientid = temp.clientid
-    local signature = temp.signature
-    local time = temp.time
-
-    if ip ~= addr then
-        return errorcode["token验证的ip与数据的ip不符合"]
+function login.REQUEST:handshake()
+    if handshaketimeout then
+        handshaketimeout()
+        handshaketimeout = nil
     end
 
-    ---解密signature
-    local temp2 = crypt.desdecode(des_key, signature)
-
-    ---判断数据是否正确
-    local temp3 = utils.String2Table(temp2)
-    if temp3.account == account and
-            temp3.password == password and
-            temp3.ip == ip and
-            temp3.clientid == clientid and
-            temp3.time == time
-    then
-        local diff = os.difftime(os.time(), temp3.time)
-        if diff > 120 then
-            return errorcode["token超时"]
+    if not logintimeout then
+        local code = loginUtils.ContrastVersion(self.largeversion, self.smallversion,
+                config.largeversion, config.smallversion)
+        if code ~= errorcode["成功"] then
+            ---握手失败1秒后踢出
+            if logintimeout then
+                logintimeout()
+                logintimeout = nil
+            end
+            utils.timeout(100, function ()
+                if agent then
+                    agent:close()
+                end
+            end)
         else
-            return errorcode["成功"]
+            ---握手成功后10秒没有登录就踢出
+            logintimeout = utils.cancelable_timeout(1000, function ()
+                if agent then
+                    agent:close()
+                end
+            end)
         end
+        return { code = code,
+                 largeversion = config.largeversion,
+                 smallversion = config.smallversion }
+    else
+        logintimeout()
+        logintimeout = nil
+        utils.timeout(100, function ()
+            if agent then
+                agent:close()
+            end
+        end)
+        return { code = errorcode["登录流程颠倒"],
+                 largeversion = config.largeversion,
+                 smallversion = config.smallversion }
     end
-    return errorcode["token验证失败"]
 end
+
+function login.REQUEST:login()
+    if handshaketimeout then
+        ---没有握手，1秒后踢出
+        handshaketimeout()
+        handshaketimeout = nil
+        utils.timeout(100, function ()
+            if agent then
+                agent:close()
+            end
+        end)
+        return { code = errorcode["登录流程颠倒"] }
+    end
+
+    playerinfo = nil
+    logininfo = nil
+
+    local account = crypt.base64decode(self.account)
+    local password = crypt.base64decode(self.password)
+    local platform = crypt.base64decode(self.platform)
+    local channel = crypt.base64decode(self.channel)
+    local clientid = crypt.base64decode(self.clientid)
+    local external = crypt.base64decode(self.external)
+
+    local res = agent:getAccountInfo(account)
+    if  res and #res > 0 then
+        if password and
+                loginUtils.GetPassword(password) == res[1].password then
+            if logintimeout then
+                logintimeout()
+                logintimeout = nil
+            end
+            playerinfo = res[1]
+            logininfo = {
+                account = account,
+                platform = platform,
+                channel = channel,
+                clientid = clientid,
+                external = external
+            }
+            return {
+                code = 0,
+                token = loginUtils.GetToken(account,
+                        password, agent.addr, clientid),
+                gameip = "101.132.77.100",
+                gameport = 20013,
+            }
+        else
+            return { code = errorcode["密码错误"] }
+        end
+    else
+        return { code = errorcode["无此帐号"] }
+    end
+end
+
+function login.REQUEST:heartbeat()
+    print("RESPONSE:hello:", self and self.what or nil)
+    return {result = string.format("I get:%s",
+            self and self.what or "nil")}
+end
+
+function login.REQUEST:hello()
+    print("REQUEST:hello:", self and self.msg or nil)
+    return {msg = "server vesion:0.0.1"}
+end
+
+login.RESPONSE = {}
 
 return login
