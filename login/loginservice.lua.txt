@@ -21,8 +21,8 @@ local function close_agent(fd)
     local a = clients[fd]
     clients[fd] = nil
     if a then
-        skynet.call(gate, "lua", "kick", fd)
         a.agent.post.disconnect()
+        skynet.call(gate, "lua", "kick", fd)
     end
 end
 
