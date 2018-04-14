@@ -31,7 +31,7 @@ function SOCKET.open(fd, addr)
     --local my = snax.self()
     --local agent = snax.newservice("login/loginagent", clients[fd],
     --        gate, my.handle, my.type)
-    local agent = skynet.newservice("login.loginwsagent")
+    local agent = skynet.newservice("login/loginwsagent")
     skynet.error(string.format("%s connected, pass it to agent :%08x", addr, agent))
     skynet.send(agent, "lua", fd, "start")
     clients[fd].agent = agent
