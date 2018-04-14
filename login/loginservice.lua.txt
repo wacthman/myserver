@@ -69,7 +69,8 @@ function init(...)
     end)
 
     ---初始化gate
-    gate = skynet.newservice("gate")
+    --gate = skynet.newservice("gate")
+    gate = skynet.newservice("login/loginwsgate")
 
 
     ---初始化db
