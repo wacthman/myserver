@@ -28,7 +28,7 @@ end
 
 function SOCKET.open(fd, addr)
     clients[fd] = { fd = fd, addr = addr }
-    local my = snax.self()
+    --local my = snax.self()
     --local agent = snax.newservice("login/loginagent", clients[fd],
     --        gate, my.handle, my.type)
     local agent = skynet.newservice("login.loginwsagent")
@@ -72,8 +72,8 @@ function init(...)
     end)
 
     ---初始化gate
-    --gate = skynet.newservice("gate")
-    gate = skynet.newservice("login/loginwsgate")
+    gate = skynet.newservice("gate")
+    --gate = skynet.newservice("login/loginwsgate")
 
 
     ---初始化db
