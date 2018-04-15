@@ -30,7 +30,7 @@ function SOCKET.open(fd, addr)
     clients[fd] = { fd = fd, addr = addr }
     local my = snax.self()
     --local agent = snax.newservice("login/loginagent", clients[fd], gate, my.handle, my.type)
-    local agent = skynet.newservice("login/loginwsagent", clients[fd], gate, my.handle, my.type)
+    local agent = snax.newservice("login/loginwsagent", clients[fd], gate, my.handle, my.type)
     clients[fd].agent = agent
 end
 
