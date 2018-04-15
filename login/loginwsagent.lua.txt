@@ -191,6 +191,7 @@ function init(client, gate, snaxhanle, snaxtype, ...)
 	skynet.call(agent.logingate, "lua", "forward", agent.fd)
 	--握手
 	print("<websocket>start handshake")
+	--[[
 	if not ws_handshake(agent.fd) then
 		agent:close()
 		return
@@ -202,6 +203,7 @@ function init(client, gate, snaxhanle, snaxtype, ...)
 		ws_recv()
 		agent:close()
 	end)
+	--]]
 end
 
 function exit(...)
