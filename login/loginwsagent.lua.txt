@@ -1,26 +1,36 @@
 local skynet = require "skynet"
 local socket = require "skynet.socket"
+
 local frame  = require "websocket.frame"
 local handshake = require "websocket.handshake"
 local sockethelper = require "http.sockethelper"
 
-local agent = { }
-local REQUEST = { }
-local FD, read, write
+local snax = require("skynet.snax")
+local sprotoloader = require "sprotoloader"
+local login = require("login.login")
 
-local function _send(message)
-	local encoded = frame.encode(message, frame.TEXT)
-	write(encoded)
+local agent = {}
+
+function agent:close()
+	self.loginservice.post.closeagent(self.fd)
 end
 
-local function _handshake(fd)
-	FD = fd
-	read  = sockethelper.readfunc(fd)
-	write = sockethelper.writefunc(fd)
+function agent:getAccountInfo(account)
+	return self.loginservice.req.db_selectaccount(account)
+end
+
+-----------------------------------------------------------------------------
+
+local function ws_send(message)
+	local encoded = frame.encode(message, frame.TEXT)
+	agent.write(encoded)
+end
+
+local function ws_handshake()
 
 	local header = ""
 	while true do
-		local bytes = read()
+		local bytes = agent.read()
 		header = header .. bytes
 		if #header > 8192 then
 			skynet.error("<websocket.handshake>error: header size > 8192")
@@ -39,29 +49,61 @@ local function _handshake(fd)
 	local protocols = { } -- todo: how to set protocols?
 	local response, protocol = handshake.accept_upgrade(header, protocols)
 	if not response then
-		skynet.error("<websocket.handshake>error: handshake parse header fault")
+		print("<websocket.handshake>error: handshake parse header fault")
 		return
 	end
 
 	print("send handshake http response:" .. response)
 
-	write(response)
-	skynet.error(string.format("<websocket.handshake>web socket %q connection established", fd))
+	agent.write(response)
+	print(string.format("<websocket.handshake>web socket %q connection established", agent.fd))
 
 	return true
 end
 
-local function _close()
+local function ws_close()
 	local encoded = frame.encode_close(1000, 'force close')
 	encoded = frame.encode(encoded, frame.CLOSE)
 
 	print("force close:" .. encoded)
 
-	write(encoded)
-	socket.close(FD)
+	agent.write(encoded)
+	agent:close()
 end
 
-local function _dispatch(text, opcode)
+local function request(name, args, response)
+	print("_request:", name, args, response)
+	local f = assert(login.REQUEST[name])
+	local r = f(args)
+	if response then
+		return response(r)
+	end
+end
+
+local function response(session, args)
+	local f = assert(login.RESPONSE[session])
+	f(args)
+end
+
+local function dispatch(type, ...)
+	if type == "REQUEST" then
+		local ok, result  = pcall(request, ...)
+		if ok then
+			if result then
+				ws_send(result)
+			end
+		else
+			skynet.error(result)
+		end
+	elseif type == "response" then
+		local ok, result  = pcall(response, ...)
+		if not ok then
+			skynet.error(result)
+		end
+	end
+end
+
+local function ws_dispatch(text, opcode)
 	print(string.format("<websocket>opcode:%q message:%q", opcode, text))
 
 	local TEXT  = assert(frame.TEXT)
@@ -70,32 +112,33 @@ local function _dispatch(text, opcode)
 
 	if opcode == TEXT then
 		-- your message deserialization and logic
+		--dispatch(agent.host:dispatch(text))
 		return true
 	end
 
 	if opcode == CLOSE then
-	    local code, reason = frame.decode_close(message)
-	    print(string.format("<websocket>CLOSE code:%q reason:%q", code, reason))
-	    local encoded = frame.encode_close(code)
-	    encoded = frame.encode(encoded, frame.CLOSE)
+		local code, reason = frame.decode_close(message)
+		print(string.format("<websocket>CLOSE code:%q reason:%q", code, reason))
+		local encoded = frame.encode_close(code)
+		encoded = frame.encode(encoded, frame.CLOSE)
 
-	    local ok, err = pcall(write, encoded)
-	    if not ok then
-	    	-- remote endpoint may has closed tcp-connection already
-	    	skynet.error("write close protocol failure:" .. tostring(err))
-	    end
-	    socket.close(assert(FD))
+		local ok, err = pcall(agent.write, encoded)
+		if not ok then
+			-- remote endpoint may has closed tcp-connection already
+			skynet.error("write close protocol failure:" .. tostring(err))
+		end
+		socket.close(assert(agent.fd))
 	end
 end
 
-local function _recv()
+local function ws_recv()
 	local last
 	local frames = {}
 	local first_opcode
 
 	while true do
 		-- skynet will report error and close socket if socket error (see socket.lua)
-		local encoded = read()
+		local encoded = agent.read()
 		if last then
 			encoded = last .. encoded
 			last = nil
@@ -110,7 +153,7 @@ local function _recv()
 				table.insert(frames, decoded)
 				encoded = rest
 				if fin == true then
-					if not _dispatch(table.concat(frames), first_opcode) then
+					if not ws_dispatch(table.concat(frames), first_opcode) then
 						-- socket closed in [_dispatch]
 						return
 					end
@@ -119,33 +162,50 @@ local function _recv()
 				end
 			end
 		until (not decoded)
-		
+
 		if #encoded > 0 then
 			last = encoded
 		end
 	end
 end
 
-function agent.start(fd)
-	socket.start(fd)
+--------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------
 
-	skynet.error("<websocket>start handshake")
-	if not _handshake(fd) then
-		socket.close(fd)
-		skynet.exit()
-		return
-	end
-
-	skynet.error("<websocket>receive and dispatch")
-	_recv()
-
-	skynet.error("<websocket>exit")
-	skynet.exit()
+function accept.disconnect()
+	snax.exit()
 end
 
-skynet.start(function()
-	skynet.dispatch("lua", function (_, _, fd, method, ...)
-		local f = assert(agent[method])
-		skynet.retpack(f(fd, ...))
+function init(client, gate, snaxhanle, snaxtype, ...)
+	agent.fd = client.fd
+	agent.addr = client.addr
+	agent.logingate = gate
+	agent.loginservice = snax.bind(snaxhanle, snaxtype)
+	agent.host = sprotoloader.load(1):host "package"
+	agent.send_request = agent.host:attach(sprotoloader.load(2))
+
+	agent.read = sockethelper.readfunc(agent.fd)
+	agent.write = sockethelper.writefunc(agent.fd)
+
+
+	skynet.call(agent.logingate, "lua", "forward", agent.fd)
+	--握手
+	print("<websocket>start handshake")
+	if not ws_handshake(agent.fd) then
+		agent:close()
+		return
+	end
+	login.join(agent)
+	--接受消息
+	skynet.fork(function()
+		print("<websocket>receive and dispatch")
+		ws_recv()
+		agent:close()
 	end)
-end)
+end
+
+function exit(...)
+	print("<websocket>exit")
+	login.quit()
+	agent = nil
+end

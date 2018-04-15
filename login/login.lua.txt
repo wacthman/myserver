@@ -13,6 +13,10 @@ local agent
 
 function login.join(a)
     agent = a
+    ---10秒没有握手就踢出
+    handshaketimeout = utils.cancelable_timeout(1000, function ()
+        agent:close()
+    end)
 end
 
 function login.quit()

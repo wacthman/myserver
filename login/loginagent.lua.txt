@@ -76,13 +76,7 @@ function init(client, gate, snaxhanle, snaxtype, ...)
     agent.host = sprotoloader.load(1):host "package"
     agent.send_request = agent.host:attach(sprotoloader.load(2))
 
-    --[[
-    ---10秒没有握手就踢出
-    handshaketimeout = utils.cancelable_timeout(1000, function ()
-        loginservice.post.closeagent(fd)
-    end)
-    --]]
-    login.join(agent)
+    --login.join(agent)
     skynet.call(agent.logingate, "lua", "forward", agent.fd)
 end
 
