@@ -5,6 +5,7 @@
 将登录服踢出
 接收登录服的加入
 --]]
+local skynet = require("skynet")
 local snax = require "skynet.snax"
 
 local loginservices = {}
@@ -14,7 +15,7 @@ local function getloginservice(index)
 end
 
 local function newloginservice()
-    local s = snax.newservice("loginservice")
+    local s = skynet.newservice("loginservice")
     loginservices[#loginservices + 1] = s
     return #loginservices
 end

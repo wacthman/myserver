@@ -1,7 +1,7 @@
 root = "./"
-luaservice = root.."service/?.lua;"..root.."myserver/?.lua.txt;"
+luaservice = root.."service/?.lua;"..root.."myserver/?.lua.txt;"..root.."myserver/login/?.lua.txt;"
 lualoader = root .. "lualib/loader.lua"
-lua_path = root.."lualib/?.lua;"..root.."lualib/?/init.lua;"..root.."myserver/?.lua.txt;"
+lua_path = root.."lualib/?.lua;"..root.."lualib/?/init.lua;"..root.."myserver/?.lua.txt;"..root.."myserver/login/?.lua.txt;"
 lua_cpath = root .. "luaclib/?.so"
 snax = root.."myserver/?.lua.txt;"..root.."myserver/login/?.lua.txt;"..root.."myserver/hall/?.lua.txt;"
 -- preload = "./examples/preload.lua"	-- run preload.lua before every lua service run
