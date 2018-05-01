@@ -1,149 +1,139 @@
+local errorcode = require("common.errorcode")
+local snax = require("skynet.snax")
+local utils = require("login.loginutils")
+local commonUtils = require("common.utils")
+local commonDebug = require("common.debug")
+local config = require("common.config")
+local helper = require("helper")
+
 local login = {}
-local utils = require "utils"
-local errorcode = require "login.loginerrorcode"
-local config = require("login.loginconfig")
-local loginUtils = require("login.loginutils")
-local crypt = require "skynet.crypt"
 
-local handshaketimeout
-local logintimeout
-local playerinfo
-local logininfo
-local agent
+function login.new(loginagent, rpc)
+    local agent = {}
 
-function login.join(a)
-    agent = a
-    ---10秒没有握手就踢出
-    handshaketimeout = utils.cancelable_timeout(1000, function ()
-        agent:close()
-    end)
-end
-
-function login.quit()
-    playerinfo = nil
-    logininfo = nil
-    if handshaketimeout then
-        handshaketimeout()
-        handshaketimeout = nil
-    end
-    if logintimeout then
-        logintimeout()
-        logintimeout = nil
-    end
-end
-
-login.REQUEST = {}
-
-function login.REQUEST:handshake()
-    if handshaketimeout then
-        handshaketimeout()
-        handshaketimeout = nil
-    end
-
-    if not logintimeout then
-        local code = loginUtils.ContrastVersion(self.largeversion, self.smallversion,
-                config.largeversion, config.smallversion)
-        if code ~= errorcode["成功"] then
-            ---握手失败1秒后踢出
-            if logintimeout then
-                logintimeout()
-                logintimeout = nil
-            end
-            utils.timeout(100, function ()
-                if agent then
-                    agent:close()
-                end
-            end)
-        else
-            ---握手成功后10秒没有登录就踢出
-            logintimeout = utils.cancelable_timeout(1000, function ()
-                if agent then
-                    agent:close()
-                end
-            end)
+    function agent.hello(data)
+        --检查db gate是否正常
+        if not loginagent.db then
+            return {result = errorcode("登录服数据库初始化失败")}
         end
-        return { code = code,
-                 largeversion = config.largeversion,
-                 smallversion = config.smallversion }
-    else
-        logintimeout()
-        logintimeout = nil
-        utils.timeout(100, function ()
-            if agent then
-                agent:close()
-            end
-        end)
-        return { code = errorcode["登录流程颠倒"],
-                 largeversion = config.largeversion,
-                 smallversion = config.smallversion }
-    end
-end
 
-function login.REQUEST:login()
-    if handshaketimeout then
-        ---没有握手，1秒后踢出
-        handshaketimeout()
-        handshaketimeout = nil
-        utils.timeout(100, function ()
-            if agent then
-                agent:close()
-            end
-        end)
-        return { code = errorcode["登录流程颠倒"] }
+        agent.randomstring = commonUtils.randomString(20)
+
+        return {result = 0}
     end
 
-    playerinfo = nil
-    logininfo = nil
+    function agent.login(data)
+        local type = data.type
+        local account = data.account
+        local password = data.password
+        local extra = data.extra
 
-    local account = crypt.base64decode(self.account)
-    local password = crypt.base64decode(self.password)
-    local platform = crypt.base64decode(self.platform)
-    local channel = crypt.base64decode(self.channel)
-    local clientid = crypt.base64decode(self.clientid)
-    local external = crypt.base64decode(self.external)
-
-    local res = agent:getAccountInfo(account)
-    if  res and #res > 0 then
-        if password and
-                loginUtils.GetPassword(password) == res[1].password then
-            if logintimeout then
-                logintimeout()
-                logintimeout = nil
+        --检查数据库账号和密码
+        local id
+        if loginagent.db then
+            local sql = string.format([[SELECT * FROM userinfo
+            WHERE account='%s']], account)
+            local res = loginagent.db.req.query(sql)
+            if res and #res > 0 then
+                if not res[1].account or
+                        not res[1].password or
+                        not res[1].id then
+                    return {result = errorcode("登录服数据库数据错误")}
+                end
+                if res[1].account == account then
+                    if res[1].password ~= password then
+                        return {result = errorcode("密码错误")}
+                    end
+                    id = res[1].id
+                else
+                    return {result = errorcode("登录服数据库数据错误")}
+                end
+            else
+                return {result = errorcode("无此账号")}
             end
-            playerinfo = res[1]
-            logininfo = {
-                account = account,
-                platform = platform,
-                channel = channel,
-                clientid = clientid,
-                external = external
-            }
-            return {
-                code = 0,
-                token = loginUtils.GetToken(account,
-                        password, agent.addr, clientid),
-                gameip = "101.132.77.100",
-                gameport = 20013,
-            }
         else
-            return { code = errorcode["密码错误"] }
+            return {result = errorcode("登录服数据库初始化失败")}
         end
-    else
-        return { code = errorcode["无此帐号"] }
+
+        if not id then return {result = errorcode("无此账号id")} end
+
+        local ok = loginagent.gateagent.req.loginsuccess()
+        if ok then
+            local token, info = utils.GetToken(loginagent.login, loginagent.registername,
+                    account,  password,
+                    loginagent.clientinfo and loginagent.clientinfo.ip or "",
+                    agent.randomstring, id, agent.randomstring)
+
+            if token then
+                loginagent.timeout = commonUtils.cancelable_timeout(
+                        config.TIME_OUT1,
+                        function ()
+                            loginagent.timeout = nil
+                            snax.exit()
+                        end)
+                agent.tokeninfo = info
+                return {
+                    result = 0,
+                    token = token }
+            else
+                return {result = errorcode("游戏服未准备就绪")}
+            end
+        else
+            return {result = errorcode("游戏服未准备就绪")}
+        end
     end
-end
 
-function login.REQUEST:heartbeat()
-    print("RESPONSE:hello:", self and self.what or nil)
-    return {result = string.format("I get:%s",
-            self and self.what or "nil")}
-end
+    function agent.logout(data)
+        local code = utils.ClearToken(loginagent.login,
+                loginagent.registername, agent.tokeninfo)
+        agent.tokeninfo = nil
+        return { result = code }
+    end
 
-function login.REQUEST:hello()
-    print("REQUEST:hello:", self and self.msg or nil)
-    return {msg = "server vesion:0.0.1"}
-end
+    function agent.register(data)
+        local account = data.account
+        local password = data.password
+        local extra = data.extra
 
-login.RESPONSE = {}
+        if loginagent.db then
+            local sql = string.format([[SELECT * FROM userinfo
+            WHERE account='%s']], account)
+            local res = loginagent.db.req.query(sql)
+
+            if res then
+                if #res <= 0 then
+                    sql = string.format([[INSERT INTO userinfo(account,password) VALUES ("%s", "%s")]],
+                            account, password)
+                    res = loginagent.db.req.query(sql)
+                    if not res or res.error then
+                        return {result = errorcode("登录服数据库请求失败")}
+                    end
+                else
+                    return {result = errorcode("账号已经存在")}
+                end
+            else
+                return {result = errorcode("登录服数据库数据错误")}
+            end
+        else
+            return {result = errorcode("登录服数据库初始化失败")}
+        end
+
+        return { result = 0 }
+    end
+
+    function agent.checkToken(token)
+        local code, info = utils.VerificationToken(loginagent.login, token,
+                agent.tokeninfo,
+                loginagent.clientinfo and loginagent.clientinfo.ip or "")
+        if code == 0 then
+            return code, info.id
+        else
+            agent.tokeninfo = nil
+            return code
+        end
+    end
+
+    return agent
+end
 
 return login

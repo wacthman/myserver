@@ -1,0 +1,221 @@
+local skynet = require("skynet")
+local snax = require("skynet.snax")
+local socketdriver = require "skynet.socketdriver"
+local helper = require("helper")
+local servertype = require("common.servertype")
+
+local gateagent
+
+local function send_data(data)
+    assert(gateagent.fd)
+    local package = string.pack(">s2", data)
+    socketdriver.send(gateagent.fd, package)
+end
+
+local function clear_agent(msg)
+    if gateagent.loginagentinfo then
+        if gateagent.login then
+            gateagent.login.req.closeagent(
+                    gateagent.loginagentinfo.registername, msg)
+        end
+
+        gateagent.loginagentinfo = nil
+    end
+    if gateagent.gameagentinfo then
+        if gateagent.game then
+            gateagent.game.req.closeagent(
+                    gateagent.gameagentinfo.registername, msg)
+        end
+
+        gateagent.gameagentinfo = nil
+    end
+end
+
+function init(data,
+              handle, type)
+    snax.enablecluster()
+    gateagent = {}
+    gateagent.manager = helper.getUniqueMachineManager()
+    gateagent.node = helper.getLocalNodeName()
+    gateagent.fd = data.fd
+    gateagent.addr = data.msg
+    gateagent.machine = snax.bind(data.machinehandle, data.machinetype)
+    gateagent.gate = snax.bind(handle, type)
+    gateagent.registername = string.format("%s_%s_%d",
+            gateagent.node, snax.self().type, data.fd)
+    helper.registerRemoteSnaxServer(gateagent.registername)
+    print("----------gateagent service init:", gateagent.registername)
+end
+
+function exit(notice)
+    if notice then
+        gateagent.gate.post.onLocalServerExit(gateagent.registername,
+                gateagent.scriptname, gateagent.fd)
+    end
+
+    helper.unregisterRemoteSnaxServer(gateagent.registername)
+    gateagent = nil
+    print("----------gateagent service exit:", notice)
+end
+
+function accept.open()
+    assert(gateagent.fd)
+    assert(gateagent.gate)
+
+    local ok, node, registername, type, handle =
+    gateagent.machine.req.getServer(gateagent.node,
+            servertype.login)
+
+    if ok then
+        if node == gateagent.node then
+            gateagent.login = snax.bind(handle, type)
+        else
+            gateagent.login = helper.getRemoteSnaxServer(node,
+                    registername, type)
+        end
+
+        local gateagentinfo = {}
+        gateagentinfo.node = gateagent.node
+        gateagentinfo.registername = gateagent.registername
+        gateagentinfo.type = snax.self().type
+        gateagentinfo.handle = snax.self().handle
+        local clientinfo = {}
+        clientinfo.ip = gateagent.addr
+
+        local r = gateagent.login.req.openagent(gateagentinfo, clientinfo)
+        if r then
+            gateagent.auth = false
+        else
+            clear_agent()
+            snax.exit(true)
+        end
+    else
+        clear_agent()
+        snax.exit(true)
+    end
+end
+
+function accept.message(data)
+    if gateagent.auth then
+        if gateagent.gameagentinfo then
+            gateagent.gameagentinfo.server.req.message(data)
+        else
+            skynet.error("gate agent get message but gameagent is nil")
+        end
+    else
+        if gateagent.loginagentinfo then
+            gateagent.loginagentinfo.server.req.message(data)
+        else
+            skynet.error("gate agent get message but gateagent is nil")
+        end
+    end
+end
+
+function  accept.close(notice, data)
+    clear_agent(data)
+    snax.exit(notice)
+end
+
+function response.loginsuccess()
+    assert(gateagent.fd)
+    assert(gateagent.gate)
+
+    local ok, node, registername, type, handle =
+    gateagent.machine.req.getServer(gateagent.node,
+            servertype.game)
+    if ok then
+        if handle and type then
+            gateagent.game = snax.bind(handle, type)
+        else
+            gateagent.game = helper.getRemoteSnaxServer(node,
+                    registername, type)
+        end
+        local gateagentinfo = {}
+        gateagentinfo.node = gateagent.node
+        gateagentinfo.registername = gateagent.registername
+        gateagentinfo.type = snax.self().type
+        gateagentinfo.handle = snax.self().handle
+        local clientinfo = {}
+        clientinfo.ip = gateagent.addr
+        local loginagentinfo = gateagent.loginagentinfo
+
+        local r, n, rn, sn, h, t = gateagent.game.req.openagent(
+                gateagentinfo,
+                clientinfo,
+                loginagentinfo)
+        if r then
+            gateagent.auth = true
+            return true
+        else
+            clear_agent()
+            snax.exit(true)
+        end
+    else
+        clear_agent()
+        snax.exit(true)
+    end
+    return false
+end
+
+function response.loginfailed()
+    gateagent.auth = false
+end
+
+function response.sendclient(data)
+    send_data(data)
+end
+
+function response.onServerInit(node, registername, type, handle, data)
+    assert(node)
+    assert(registername)
+    assert(type)
+
+    if type == servertype.loginagent then
+        assert(not gateagent.loginagentinfo)
+        gateagent.loginagentinfo = {}
+        gateagent.loginagentinfo.node = node
+        gateagent.loginagentinfo.registername = registername
+        gateagent.loginagentinfo.handle = handle
+        gateagent.loginagentinfo.type = type
+        if node == gateagent.node then
+            gateagent.loginagentinfo.server = snax.bind(handle, type)
+        else
+            gateagent.loginagentinfo.server =helper.getRemoteSnaxServer(node,
+                    registername, type)
+        end
+        gateagent.gate.post.openclient(gateagent.fd)
+    elseif type == servertype.gameagent then
+        assert(not gateagent.gameagentinfo)
+        gateagent.gameagentinfo = {}
+        gateagent.gameagentinfo.node = node
+        gateagent.gameagentinfo.registername = registername
+        gateagent.gameagentinfo.handle = handle
+        gateagent.gameagentinfo.type = type
+        if node == gateagent.node then
+            gateagent.gameagentinfo.server = snax.bind(handle, type)
+        else
+            gateagent.gameagentinfo.server =helper.getRemoteSnaxServer(node,
+                    registername, type)
+        end
+    else
+        skynet.error("gate agent onServerInit:", type)
+    end
+end
+
+function response.onServerExit(node, registername, type, data)
+    assert(node)
+    assert(registername)
+    assert(type)
+
+    if type == servertype.loginagent then
+        --非gateagent主动调用退出的，gateagent也退出
+        clear_agent(data)
+        snax.exit(true)
+    elseif type == servertype.gameagent then
+        --非gateagent主动调用退出的，gateagent也退出
+        clear_agent(data)
+        snax.exit(true)
+    else
+        skynet.error("gate agent onRemoteServerExit:", type)
+    end
+end

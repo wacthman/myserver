@@ -1,0 +1,136 @@
+local skynet = require("skynet")
+local snax = require("skynet.snax")
+local helper = require("helper")
+local sprotoloader = require "sprotoloader"
+local game = require("game.game")
+local servertype = require("common.servertype")
+local gameagent
+
+local function rpc(name, data, cb)
+    if gameagent and gameagent.request and gameagent.gateagent then
+        if cb then
+            local d = gameagent.request(name, data)
+            gameagent.gateagent.req.sendclient(d)
+        else
+            local s = #gameagent.response_lister + 1
+            local d = gameagent.request(name, data, s)
+            gameagent.gateagent.req.sendclient(d)
+            gameagent.response_lister[s] = {}
+            gameagent.response_lister[s].cb = cb
+            gameagent.response_lister[s].isenable = true
+        end
+    end
+end
+
+function init(data, handle, type)
+    snax.enablecluster()
+    gameagent = {}
+    gameagent.manager = helper.getUniqueMachineManager()
+    gameagent.node = helper.getLocalNodeName()
+    gameagent.game = snax.bind(handle, type)
+    gameagent.db = snax.bind(data.dbhandle, data.dbtype)
+    gameagent.clientinfo = data.clientinfo
+    gameagent.registername = string.format("%s_%s_%d",
+            gameagent.node, snax.self().type, data.index)
+
+    if data.gateagentinfo.node == gameagent.node then
+        gameagent.gateagent = snax.bind(data.gateagentinfo.handle,
+                data.gateagentinfo.type)
+    else
+        gameagent.gateagent = helper.getRemoteSnaxServer(
+                data.gateagentinfo.node,
+                data.gateagentinfo.registername,
+                data.gateagentinfo.type)
+    end
+
+    if data.loginagentinfo.node == gameagent.node then
+        gameagent.loginagent = snax.bind(data.loginagentinfo.handle,
+                data.loginagentinfo.type)
+    else
+        gameagent.loginagent = helper.getRemoteSnaxServer(
+                data.loginagentinfo.node,
+                data.loginagentinfo.registername,
+                data.loginagentinfo.type)
+    end
+
+    gameagent.host = sprotoloader.load(3):host "package"
+    gameagent.request = gameagent.host:attach(sprotoloader.load(4))
+    gameagent.response_lister = {}
+    gameagent.gamelogic = game.new(gameagent, rpc)
+    gameagent.game.req.onServerInit(gameagent.node,
+            gameagent.registername, snax.self().type, snax.self().handle)
+    gameagent.gateagent.req.onServerInit(gameagent.node,
+            gameagent.registername, snax.self().type, snax.self().handle)
+    gameagent.loginagent.req.onServerInit(gameagent.node,
+            gameagent.registername, snax.self().type, snax.self().handle)
+    helper.registerRemoteSnaxServer(gameagent.registername)
+
+    print("----------gameagent service init:", gameagent.registername)
+end
+
+function exit(notice, msg)
+    if notice then
+        gameagent.login.req.onServerExit(
+                gameagent.node,
+                gameagent.registername,
+                snax.self().type)
+        gameagent.gateagent.req.onServerExit(
+                gameagent.node,
+                gameagent.registername,
+                snax.self().type)
+        if gameagent.loginagent then
+            gameagent.loginagent.req.onServerExit(
+                    gameagent.node,
+                    gameagent.registername,
+                    snax.self().type)
+        end
+    end
+    helper.unregisterRemoteSnaxServer(gameagent.registername)
+    gameagent = nil
+    print("----------gameagent service exit:", notice, msg)
+end
+
+function  accept.close(notice, data)
+    snax.exit(notice, data)
+end
+
+function response.onServerInit(node, registername, type, handle, data)
+    assert(node)
+    assert(registername)
+    assert(type)
+
+    skynet.error("game agent onServerInit:", type)
+
+end
+
+function response.onServerExit(node, registername, type, data)
+    assert(node)
+    assert(registername)
+    assert(type)
+
+    if type == servertype.loginagent then
+        gameagent.loginagent = nil
+    else
+        skynet.error("game agent onServerExit:", type)
+    end
+end
+
+function response.message(msg)
+    if gameagent.host and gameagent.gateagent then
+        local type, name, data, cb = gameagent.host:dispatch(msg)
+        if type == "REQUEST" then
+            if gameagent.gamelogic and gameagent.gamelogic[name] then
+                local result = gameagent.gamelogic[name](data)
+                if cb then
+                    gameagent.gateagent.req.sendclient(cb(result))
+                end
+            end
+        elseif type == "RESPONSE" then
+            if gameagent.response_lister[name] then
+                if gameagent.response_lister[name].isenable then
+                    gameagent.response_lister[name].cb(data)
+                end
+            end
+        end
+    end
+end

@@ -1,0 +1,94 @@
+local errorcode = require("common.errorcode")
+local snax = require("skynet.snax")
+local utils = require("login.loginutils")
+local commonUtils = require("common.utils")
+local commonDebug = require("common.debug")
+local config = require("common.config")
+local helper = require("helper")
+
+local game = {}
+
+game.online_user = {}
+
+function game.new(gameagent, rpc)
+    local agent = {}
+
+    function agent.signin(data)
+        if data and data.token then
+            if gameagent.loginagent then
+                local code, id = gameagent.loginagent.req.checkToken(data.token)
+                if code == 0 then
+
+                    --获取玩家信息
+                    local playerInfo = {}
+                    if gameagent.db then
+                        local sql = string.format([[SELECT * FROM
+                        playerinfo WHERE id='%d']], id)
+                        local res = gameagent.db.req.query(sql)
+                        if res then
+                            if #res <= 0 then
+                                playerInfo.uid = id + 100000
+                                playerInfo.name = "玩家"..tostring(playerInfo.uid)
+                                playerInfo.head = ""
+                                playerInfo.gold = 0
+                                playerInfo.diamond = 0
+                                sql = string.format([[INSERT INTO
+                                playerinfo(id,uid)
+                                VALUES ("%d", "%d")]], id, playerInfo.uid)
+                                res = gameagent.db.req.query(sql)
+                                if res and res.error then
+                                    return {result = errorcode("游戏服数据库数据错误")}
+                                end
+                            else
+                                if not res[1].id or
+                                        not res[1].uid then
+                                    return {
+                                        result = errorcode("游戏服数据库数据错误")
+                                    }
+                                end
+
+                                playerInfo.uid = res[1].uid
+                                playerInfo.name = res[1].name or
+                                        "玩家"..tostring(playerInfo.uid)
+                                playerInfo.head = res[1].head or ""
+                                playerInfo.gold = res[1].gold
+                                playerInfo.diamond = res[1].diamond
+                            end
+                        else
+                            return {result = errorcode("游戏服数据库数据错误")}
+                        end
+                    else
+                        return {result = errorcode("游戏服数据库数据错误")}
+                    end
+                    return {result = 0, playerInfo = playerInfo}
+
+                else
+                    return {result = errorcode("token校验失败")}
+                end
+            else
+                return {result = errorcode("登录服连接失败")}
+            end
+        else
+            return {result = errorcode("登录数据错误")}
+        end
+    end
+
+    function agent.heartbeat(data)
+
+    end
+
+    function agent.createroom(data)
+
+        return {result = 0, roomid = 0}
+    end
+
+    function agent.enterroom(data)
+        local roomid = data.roomid
+
+        return {result = 0}
+    end
+
+    return agent
+end
+
+return game

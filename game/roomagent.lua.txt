@@ -1,0 +1,37 @@
+local snax = require("skynet.snax")
+local helper = require("helper")
+
+local room
+function init(index, handle, type)
+    print("----------room service exit:", index, handle, type)
+    room.machine = snax.bind(handle, type)
+    room.node = helper.getLocalNodeName()
+    room.registername = string.format("%s_%s_%d",
+            room.node, snax.self().type, index)
+    room.manager = helper.getUniqueMachineManager()
+    room.machine.req.onServerInit(room.node,
+            room.registername,
+            snax.self().type, snax.self().handle)
+    helper.registerRemoteSnaxServer(room.registername)
+end
+
+function exit(notice)
+    if notice then
+        room.machine.req.onServerExit(room.node,
+                room.registername,
+                snax.self().type)
+    end
+
+
+    helper.unregisterRemoteSnaxServer(room.registername)
+    room = nil
+    print("----------room service exit:", notice)
+end
+
+function response.createRoom(node, registername, type, handle, data)
+
+end
+
+function response.enterRoom(node, registername, type, handle, data)
+
+end

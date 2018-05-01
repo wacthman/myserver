@@ -1,0 +1,6 @@
+local config = {}
+
+--登录服等待游戏服验证token的最长时间
+config.TIME_OUT1 = 3000
+
+return config

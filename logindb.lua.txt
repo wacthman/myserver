@@ -1,0 +1,62 @@
+local snax = require("skynet.snax")
+local mysql = require "skynet.db.mysql"
+local servertype = require("common.servertype")
+local helper = require("helper")
+
+local logindb
+
+function init(index, loginhandle, logintype)
+    logindb = {}
+    logindb.login = snax.bind(loginhandle, logintype)
+    logindb.node = helper.getLocalNodeName()
+    logindb.registername = string.format("%s_%d",
+            servertype.logindb, index)
+    print("----------login db service init:", logindb.registername)
+end
+
+function exit(...)
+    if logindb.db then
+        logindb.db:disconnect()
+        logindb.db = nil
+    end
+    logindb = nil
+    print("----------login db service exit:", ...)
+end
+
+function  accept.close(notice, data)
+    snax.exit(notice, data)
+end
+
+function response.query(sql)
+    if logindb.db then
+        return  logindb.db:query(sql)
+    end
+end
+
+
+function accept.connect()
+    local function on_connect(db)
+        db:query("set charset utf8")
+        db:query([[CREATE TABLE IF NOT EXISTS `userinfo`(
+            `account` VARCHAR(255) NOT NULL,
+            `password` VARCHAR(255) NOT NULL,
+            `id` INT UNSIGNED AUTO_INCREMENT,
+            `lasttime` DATETIME,
+            PRIMARY KEY (`id`,`account`)
+        )ENGINE=InnoDB DEFAULT CHARSET=utf8]])
+        logindb.db = db
+        logindb.login.req.onServerInit(logindb.node,
+                logindb.registername,
+                snax.self().type,
+                snax.self().handle)
+    end
+    mysql.connect({
+        host="127.0.0.1",
+        port=3306,
+        database="zdcgame",
+        user="root",
+        password="...Zhaiduchi1496",
+        max_packet_size = 1024 * 1024,
+        on_connect = on_connect
+    })
+end

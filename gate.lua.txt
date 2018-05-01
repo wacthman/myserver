@@ -1,0 +1,193 @@
+local skynet = require "skynet"
+local netpack = require "skynet.netpack"
+local socketdriver = require "skynet.socketdriver"
+local snax = require("skynet.snax")
+local cluster = require("skynet.cluster")
+local helper = require("helper")
+local servertype = require("common.servertype")
+
+local gate
+local MSG = {}
+
+local function dispatch_msg(fd, msg, sz)
+    if gate.agents[fd] then
+        gate.agents[fd].post.message(netpack.tostring(msg, sz))
+    else
+        skynet.error(string.format("Drop message from fd (%d) : %s",
+                fd, netpack.tostring(msg,sz)))
+    end
+end
+
+MSG.data = dispatch_msg
+
+local function dispatch_queue()
+    local fd, msg, sz = netpack.pop(gate.queue)
+    if fd then
+        -- may dispatch even the handler.message blocked
+        -- If the handler.message never block, the queue should be empty, so only fork once and then exit.
+        skynet.fork(dispatch_queue)
+        dispatch_msg(fd, msg, sz)
+
+        for fd, msg, sz in netpack.pop, gate.queue do
+            dispatch_msg(fd, msg, sz)
+        end
+    end
+end
+
+MSG.more = dispatch_queue
+
+local function close_fd(fd, msg)
+    if gate.agents[fd] then
+        gate.client_number = gate.client_number - 1
+        gate.agents[fd].post.close(false, msg)
+        gate.agents[fd] = nil
+    end
+end
+
+function MSG.open(fd, msg)
+    if gate.client_number >= gate.maxclient then
+        socketdriver.close(fd)
+        return
+    end
+    if gate.nodelay then
+        socketdriver.nodelay(fd)
+    end
+    assert(not gate.agents[fd])
+    local data = {}
+    data.fd = fd
+    data.msg = msg
+    data.machinehandle = gate.machine.handle
+    data.machinetype = gate.machine.type
+    gate.agents[fd] = helper.newSnaxServerEx(servertype.gateagent, data)
+    gate.agents[fd].post.open()
+    gate.client_number = gate.client_number + 1
+end
+
+function MSG.close(fd)
+    if fd ~= gate.socket then
+        close_fd(fd)
+    else
+        gate.socket = nil
+    end
+end
+
+function MSG.error(fd, msg)
+    if fd == gate.socket then
+        socketdriver.close(fd)
+        gate.socket = nil
+        snax.exit(msg)
+    else
+        close_fd(fd, msg)
+    end
+end
+
+function MSG.warning(fd, size)
+    if fd == gate.socket then
+        socketdriver.close(fd)
+        gate.socket = nil
+        snax.exit()
+    else
+        close_fd(fd, string.format("warning %d", size))
+        socketdriver.close(fd)
+    end
+end
+
+function init(index, handle, type)
+    gate = {}
+    gate.node = helper.getLocalNodeName()
+    assert(gate.node)
+    gate.registername = string.format("%s_%d",
+            servertype.gate, index)
+
+    skynet.register_protocol {
+        name = "socket",
+        id = skynet.PTYPE_SOCKET,	-- PTYPE_SOCKET = 6
+        unpack = function ( msg, sz )
+            return netpack.filter( gate.queue, msg, sz)
+        end,
+        dispatch = function (_, _, q, type, ...)
+            gate.queue = q
+            if type then
+                MSG[type](...)
+            end
+        end
+    }
+
+    gate.address = "0.0.0.0"
+    gate.port = 20013
+    gate.maxclient = 1024
+    gate.nodelay = false
+    gate.client_number = 0
+    gate.agents = {}
+    gate.socket = socketdriver.listen(gate.address, gate.port)
+    assert(gate.socket)
+    socketdriver.start(gate.socket)
+
+    gate.manager = helper.getUniqueMachineManager()
+    gate.machine = snax.bind(handle, type)
+
+    gate.machine.req.onServerInit(gate.node,
+            gate.registername,
+            snax.self().type, snax.self().handle)
+    print("----------gate service init:", gate.registername)
+end
+
+function exit(notice)
+    if notice then
+        gate.machine.req.onServerExit(gate.node,
+                gate.registername,
+                snax.self().type)
+    end
+
+    if gate.socket then
+        socketdriver.close(gate.socket)
+    end
+
+    if gate.queue then
+        netpack.clear(gate.queue)
+    end
+
+    --关闭所有gateagent
+    if gate.agents then
+        for _, v in pairs(gate.agents) do
+            v.post.close()
+        end
+    end
+    gate = nil
+    print("----------gate service exit:", notice)
+end
+
+function accept.openclient(fd)
+    if gate.agents[fd] then
+        socketdriver.start(fd)
+    end
+end
+
+function accept.closeclient(fd)
+    close_fd(fd)
+    socketdriver.close(fd)
+end
+
+function accept.close(notice, data)
+    snax.exit(notice)
+end
+
+function response.onServerExit(node, registername, type, data)
+    assert(node)
+    assert(registername)
+    assert(type)
+
+    if node == gate.node then
+        if type == servertype.gateagent then
+            if gate.agents[data] then
+                gate.client_number = gate.client_number - 1
+                gate.agents[data] = nil
+                socketdriver.close(data)
+            end
+        else
+            skynet.error("gate onLocalServerExit:", type)
+        end
+    else
+        skynet.error("gate onLocalServerExit:", type)
+    end
+end

@@ -1,0 +1,29 @@
+local code = {
+    "登录服数据库初始化失败",
+    "登录服数据库发生错误",
+    "无此账号",
+    "登录服数据库数据错误",
+    "密码错误",
+    "无此账号id",
+    "游戏服未准备就绪",
+    "登录服未准备就绪",
+    "登录服连接失败",
+    "登录数据错误",
+    "token校验失败",
+    "游戏服数据库数据错误",
+    "登录服数据库请求失败",
+    "账号已经存在",
+    "登出失败",
+}
+
+local errorcode = function(err)
+    for i, v in ipairs(code) do
+        if v == err then
+            return i
+        end
+    end
+
+    return -1
+end
+
+return errorcode

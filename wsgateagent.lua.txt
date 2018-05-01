@@ -1,0 +1,232 @@
+local skynet = require "skynet"
+local snax = require("skynet.snax")
+local socket = require "skynet.socket"
+local frame  = require "websocket.frame"
+local handshake = require "websocket.handshake"
+local sockethelper = require "http.sockethelper"
+local helper = require("helper")
+local scriptnames = require("common.scriptnames")
+
+local wsgateagent
+
+local function _handshake()
+	local header = ""
+	while true do
+		local bytes = wsgateagent.read()
+		header = header .. bytes
+		if #header > 8192 then
+			skynet.error("<websocket.handshake>error: header size > 8192")
+			return
+		end
+
+		local _, to = header:find("\r\n\r\n", -#bytes-3, true)
+		if to then
+			header = header:sub(1, to)
+			break
+		end
+	end
+
+	--print("accept handshake http request:" .. header)
+
+	local protocols = { } -- todo: how to set protocols?
+	local response, protocol = handshake.accept_upgrade(header, protocols)
+	if not response then
+		skynet.error("<websocket.handshake>error: handshake parse header fault")
+		return
+	end
+
+	--print("send handshake http response:" .. response)
+
+	wsgateagent.write(response)
+	--.error(string.format("<websocket.handshake>web socket %q connection established",
+	--		wsgateagent.fd))
+
+	return true
+end
+
+local function _close()
+	if wsgateagent.fd then
+		local encoded = frame.encode_close(1000, 'force close')
+		encoded = frame.encode(encoded, frame.CLOSE)
+
+		print("force close:" .. encoded)
+
+		wsgateagent.write(encoded)
+		socket.close(wsgateagent.fd)
+		wsgateagent.fd = nil
+	end
+end
+
+local function _dispatch(text, opcode)
+	print(string.format("<websocket>opcode:%q message:%q", opcode, text))
+
+	local TEXT  = assert(frame.TEXT)
+	local CLOSE = assert(frame.CLOSE)
+	assert(opcode == TEXT or opcode == CLOSE, opcode)
+
+	if opcode == TEXT then
+		--gate.req.receiveclient(wsgateagent.fd, text)
+		return true
+	end
+
+	if opcode == CLOSE then
+	    local code, reason = frame.decode_close(message)
+	    --print(string.format("<websocket>CLOSE code:%q reason:%q", code, reason))
+	    local encoded = frame.encode_close(code)
+	    encoded = frame.encode(encoded, frame.CLOSE)
+
+	    local ok, err = pcall(wsgateagent.write, encoded)
+	    if not ok then
+	    	-- remote endpoint may has closed tcp-connection already
+	    	skynet.error("write close protocol failure:" .. tostring(err))
+	    end
+	    socket.close(assert(wsgateagent.fd))
+		wsgateagent.fd_ = wsgateagent.fd --备用，还需要用它向wsgate请求
+		wsgateagent.fd = nil
+	end
+end
+
+local function _recv()
+	local last
+	local frames = {}
+	local first_opcode
+
+	while true do
+		-- skynet will report error and close socket if socket error (see socket.lua)
+		local encoded = wsgateagent.read()
+		if last then
+			encoded = last .. encoded
+			last = nil
+		end
+
+		repeat
+			local decoded, fin, opcode, rest = frame.decode(encoded)
+			if decoded then
+				if not first_opcode then
+					first_opcode = opcode
+				end
+				table.insert(frames, decoded)
+				encoded = rest
+				if fin == true then
+					if not _dispatch(table.concat(frames), first_opcode) then
+						-- socket closed in [_dispatch]
+						return
+					end
+					frames = { }
+					first_opcode = nil
+				end
+			end
+		until (not decoded)
+		
+		if #encoded > 0 then
+			last = encoded
+		end
+	end
+end
+
+function init(fd, addr,
+			  machinehandle, machinetype,
+			  gatehandle, gatetype)
+	print("----------wsgateagent server init")
+	snax.enablecluster()
+	wsgateagent = {}
+	wsgateagent.fd = fd
+	wsgateagent.addr = addr
+	wsgateagent.machine = snax.bind(machinehandle, machinetype)
+	wsgateagent.gate = snax.bind(gatehandle, gatetype)
+	wsgateagent.registername = string.format("gateagent_%d", fd)
+	wsgateagent.scriptname = "gateagent"
+	wsgateagent.manager = helper.getUniqueMachineManager()
+	wsgateagent.node = helper.getLocalNodeName()
+	helper.registerRemoteSnaxServer(wsgateagent.registername)
+end
+
+function exit(...)
+	print("----------wsagent exit")
+	helper.unregisterRemoteSnaxServer(wsgateagent.registername)
+	if wsgateagent.fd then
+		socket.close(wsgateagent.fd)
+		wsgateagent.fd = nil
+	end
+	wsgateagent = {}
+end
+
+local function start()
+	assert(wsgateagent.fd)
+	socket.start(wsgateagent.fd)
+	wsgateagent.read  = sockethelper.readfunc(wsgateagent.fd)
+	wsgateagent.write = sockethelper.writefunc(wsgateagent.fd)
+
+	--skynet.error("<websocket>start handshake")
+	if not _handshake(wsgateagent.fd) then
+		wsgateagent.gate.post.closeclient(wsgateagent.fd)
+		return
+	end
+
+	--skynet.error("<websocket>receive and dispatch")
+	_recv()
+
+	skynet.error("<websocket>exit")
+	wsgateagent.gate.post.closeclient(
+			wsgateagent.fd_ or wsgateagent.fd)
+end
+
+function accept.close()
+	if wsgateagent.loginagent then
+		if wsgateagent.login then
+			wsgateagent.login.req.closeagent(
+					wsgateagent.loginagentnode,
+					wsgateagent.loginagentregistername,
+					wsgateagent.loginagentscriptname)
+		end
+	elseif wsgateagent.gameagent then
+		if wsgateagent.game then
+			wsgateagent.game.req.closeagent(
+					wsgateagent.gameagentnode,
+					wsgateagent.gameagentregistername,
+					wsgateagent.gameagentscriptname)
+		end
+	end
+	_close()
+	snax.exit()
+end
+
+function accept.open()
+	assert(wsgateagent.fd)
+	assert(wsgateagent.gate)
+
+	local ok, islocal, node, registername, scriptname =
+	wsgateagent.machine.req.getServer(wsgateagent.node,
+			scriptnames.login)
+
+	if ok then
+		wsgateagent.login = helper.getRemoteSnaxServer(node,
+				registername, scriptname)
+		local clientinfo = {}
+		clientinfo.ip = wsgateagent.addr
+
+		local r, n, rn, sn = wsgateagent.login.req.openagent(
+				wsgateagent.node,
+				wsgateagent.registername,
+				wsgateagent.scriptname,
+				clientinfo)
+		if r then
+			wsgateagent.loginagentnode = n
+			wsgateagent.loginagentregistername = rn
+			wsgateagent.loginagentscriptname = sn
+			wsgateagent.loginagent = helper.getRemoteSnaxServer(n,
+					rn, sn)
+			--wsgateagent.gate.post.openclient(wsgateagent.fd)
+			start()
+		else
+			wsgateagent.gate.post.closeclient(wsgateagent.fd)
+		end
+	else
+		wsgateagent.gate.post.closeclient(wsgateagent.fd)
+	end
+end
+
+function response.sendclient(data)
+	local encoded = frame.encode(data, frame.TEXT)
+	wsgateagent.write(encoded)
+end

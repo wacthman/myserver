@@ -1,59 +1,37 @@
 local skynet = require "skynet"
 local snax = require "skynet.snax"
+local cluster = require("skynet.cluster")
+local helper = require("helper")
+local servertype = require("common.servertype")
 
 skynet.start(function()
-	print("======main server start=======")
+	print("----------main server start")
 
-	--[[
-	local myservice = skynet.newservice("myservice")
+	local machinename = helper.getLocalNodeName()
+	local machinemanagername = helper.getUniqueMachineManagerLocalNodeName()
+	assert(machinename, "machinename is error")
+	assert(machinemanagername, "machinemanagername is error")
 
-	print("skynet.self():", skynet.self())
-	--print("skynet.harbor():", skynet.harbor(0))
+	local managerhandle, managertype
+	--首先开启machinemanager
+	if machinename == machinemanagername then
+		local manager = helper.newSnaxServer(servertype.machinemanager)
+		managerhandle = manager.handle
+		managertype = manager.type
+	end
 
-	print("skynet.call begin")
-	local value = skynet.call(myservice, "lua", "set", "key", "value")
+	--开启本地监听
+	cluster.open(machinename)
 
-	print("skynet.call end:", value)
-	]]--
+	--再开启machine
+	local machine = helper.newSnaxServerEx(servertype.machine, nil,
+			managerhandle, managertype)
 
-	--[[
-	local snaxservice = snax.newservice("snaxservice", "hello!!!")
-
-	print("snaxservice:", snaxservice)
-
-
-	print("snaxservice exit begin:")
-	snaxservice.post.exit("world!!!")
-	print("snaxservice exit end:")
-	--]]
-
-	--local snaxservice = skynet.newservice("wsservice", "hello!!!")
-
-	--local snaxservice = skynet.newservice("httpservice")
-
-	--启动 machineservice
-	local machineservice = snax.uniqueservice("machineservice")
-
-	print("machineservice:", machineservice)
-
-	--启动 loginservicemanager
-	local loginservicemanager = snax.globalservice("loginservicemanager")
-
-	print("loginservicemanager:", loginservicemanager)
-
-	--启动 loginprotomanager
-	local loginprotomanager = snax.uniqueservice("loginprotomanager")
-
-	print("loginprotomanager:", loginprotomanager)
-
-	--启动 hallservicemanager
-	local hallservicemanager = snax.globalservice("hallservicemanager")
-
-	print("hallservicemanager:", hallservicemanager)
-
-	--skynet.sleep(500)
-
-	--snax.kill(machineservice)
-
+    --启动machine
+	machine.req.createServer(servertype.gate)
+	machine.req.createServer(servertype.login)
+	machine.req.createServer(servertype.game)
+	machine.req.createServer(servertype.room)
+	print("----------main server end")
 	skynet.exit()
 end)

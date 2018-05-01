@@ -1,7 +1,9 @@
 local login = {}
-local utils = require "utils"
-local errorcode = require "login.loginerrorcode"
+local utils = require "common.utils"
+local errorcode = require "common.errorcode"
+local commonDebug = require("common.debug")
 local crypt = require "skynet.crypt"
+local snax = require("skynet.snax")
 
 local des_key = "zdcgameq"
 local password_key = "zdcgameq"
@@ -14,13 +16,13 @@ function login.ContrastVersion(clientlargever, clientsmallver, serlargever, sers
     local temp4 = tonumber(sersmallver)
 
     if ((temp1 >= temp3) and (temp2 >= temp4)) then
-        return errorcode["成功"]
+        return 0
     elseif (temp3 > temp1) then
-        return errorcode["大版本需要更新"]
+        return errorcode("大版本需要更新")
     elseif (temp4 > temp2) then
-        return errorcode["小版本需要更新"]
+        return errorcode("小版本需要更新")
     else
-        return errorcode["大版本和小版本都需要更新"]
+        return errorcode("大版本和小版本都需要更新")
     end
 end
 
@@ -30,61 +32,78 @@ function login.GetPassword(pwd)
 end
 
 ---计算token
-function login.GetToken(account, password, ip, clientid)
-    local token = {}
-    token.account = account
-    token.password = password
-    token.ip = ip
-    token.clientid = clientid
-    token.time = os.time()
+function login.GetToken(login, registername, account, password, ip,
+                        clientid, id, signature)
+    if not login then return errorcode("登录服未准备就绪")end
 
-    local signature = utils.Table2String(token)
+    local loginInfo = {}
+    loginInfo.account = account
+    loginInfo.password = password
+    loginInfo.ip = ip
+    loginInfo.clientid = clientid
+    loginInfo.time = os.time()
+    loginInfo.id = id
+    --loginInfo.subid = subid
+    loginInfo.signature = signature
+    local subid = login.req.getSubid(registername)
+    loginInfo.subid = subid
+
+    local token1 = utils.Table2String(loginInfo)
     ---加密signature
-    token.signature = crypt.desencode(des_key, signature)
-
-    local str = utils.Table2String(token)
+    local token2 = crypt.desencode(des_key, token1)
     ---BASE64 str
-    str = crypt.base64encode(str)
+    local token3 = crypt.base64encode(token2)
 
-    return str
+    return token3, loginInfo
+end
+
+function login.ClearToken(login, registername, info)
+    if not login then return errorcode("登录服未准备就绪")end
+    if login.req.clearSubid(registername, snax.self().handle, snax.self().type) then
+        return 0
+    else
+        return errorcode("登出失败")
+    end
 end
 
 ---验证token
-function login.VerificationToken(token, addr)
+function login.VerificationToken(login, token, info, ip)
+    if not login then return errorcode("登录服未准备就绪") end
+
     ---BASE64
     local str = crypt.base64decode(token)
-
-    local temp = utils.String2Table(str)
-    local account = temp.account
-    local password = temp.password
-    local ip = temp.ip
-    local clientid = temp.clientid
-    local signature = temp.signature
-    local time = temp.time
-
-    if ip ~= addr then
-        return errorcode["token验证的ip与数据的ip不符合"]
-    end
-
-    ---解密signature
-    local temp2 = crypt.desdecode(des_key, signature)
-
-    ---判断数据是否正确
-    local temp3 = utils.String2Table(temp2)
-    if temp3.account == account and
-            temp3.password == password and
-            temp3.ip == ip and
-            temp3.clientid == clientid and
-            temp3.time == time
-    then
-        local diff = os.difftime(os.time(), temp3.time)
-        if diff > 120 then
-            return errorcode["token超时"]
-        else
-            return errorcode["成功"]
+    if str then
+        local temp1 = crypt.desdecode(des_key, str)
+        if temp1 then
+            local temp2 = utils.String2Table(temp1)
+            if temp2 then
+                if temp2.ip ~= ip then
+                    return errorcode("token验证的ip与数据的ip不符合")
+                end
+                local r = login.req.verificationSubid(temp2.subid,
+                        snax.self().handle, snax.self().type)
+                if r and info then
+                    if temp2.account == info.account and
+                            temp2.password == info.password and
+                            temp2.ip == info.ip and
+                            temp2.clientid == info.clientid and
+                            temp2.time == info.time and
+                            temp2.id == info.id and
+                            temp2.subid == info.subid and
+                            temp2.signature == info.signature
+                    then
+                        local diff = os.difftime(os.time(), temp2.time)
+                        if diff > 120 then
+                            return errorcode("token超时")
+                        else
+                            return 0, temp2
+                        end
+                    end
+                end
+            end
         end
     end
-    return errorcode["token验证失败"]
+    return errorcode("token验证失败")
 end
 
 return login

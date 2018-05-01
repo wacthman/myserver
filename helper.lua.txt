@@ -1,0 +1,76 @@
+local skynet = require("skynet")
+local snax = require("skynet.snax")
+local cluster = require("skynet.cluster")
+local servertype = require("common.servertype")
+local helper = {}
+
+--获取整个网络中唯一的MachineManager
+function helper.getUniqueMachineManager(handle, type)
+    if handle and type then
+        return snax.bind(handle, type)
+    else
+        local machinemanagername =
+        helper.getUniqueMachineManagerLocalNodeName()
+        assert(machinemanagername)
+        return helper.getRemoteSnaxServer(machinemanagername,
+                string.format("%s_machinemanager",
+                        machinemanagername),
+                servertype.machinemanager)
+    end
+end
+
+--获取本机IP(config配置)
+function helper.getLocalNodeIP()
+    return skynet.getenv("machineip")
+end
+
+--获取本地节点名(config配置)
+function helper.getLocalNodeName()
+    return skynet.getenv("machinename")
+end
+
+--获取MachineManager所在的本机名(config配置)
+function helper.getUniqueMachineManagerLocalNodeName()
+    return skynet.getenv("machinemanager")
+end
+
+--获取网络中的Snax服务
+function helper.getRemoteSnaxServer(node, registername, scriptname)
+    if not scriptname then scriptname = registername end
+    local address = cluster.query(node, registername)
+    return cluster.snax(node, scriptname, address)
+end
+
+function helper.registerRemoteSnaxServer(registername, registeraddr)
+    cluster.register(registername, registeraddr)
+end
+
+function helper.unregisterRemoteSnaxServer(registername)
+    cluster.unregister(registername)
+end
+
+function helper.newSnaxServer(servername, data, fatherhandle, fathertype)
+    if data then
+        return snax.newservice(servername,
+                data, fatherhandle,
+                fathertype)
+    else
+        return snax.newservice(servername,
+                fatherhandle,
+                fathertype)
+    end
+end
+
+function helper.newSnaxServerEx(servername, data, fatherhandle, fathertype)
+    if data then
+        return snax.newservice(servername,
+                data, fatherhandle or snax.self().handle,
+                fathertype or snax.self().type)
+    else
+        return snax.newservice(servername,
+                fatherhandle or snax.self().handle,
+                fathertype or snax.self().type)
+    end
+end
+
+return helper

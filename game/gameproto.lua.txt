@@ -8,43 +8,46 @@ proto.c2s = sprotoparser.parse [[
 	session 1 : integer
 }
 
-hello 1 {
-	request {
-		largeversion 0 : string
-		smallversion 1 : string
-	}
-	response {
-		result 0  : integer
-	}
+.PlayerInfo {
+	uid 0 : integer
+	name 1 : string
+	head 2 : string
+	gold 3 : integer
+	diamond 4 : integer
 }
 
-login 2 {
+signin 1 {
 	request {
-	    type 0 : string
-		account 1 : string
-		password 2 : string
-		extra 3 : binary
+	    token 0 : string
 	}
 	response {
 		result 0 : integer
-		token 1 : string
+		playerInfo 1 : PlayerInfo
 	}
 }
 
-logout 3 {
+heartbeat 2 {
+}
+
+.RommInfo {
+	id 0 : integer
+	players 1 : *PlayerInfo
+}
+
+createroom 3 {
 	response {
 		result 0 : integer
+		romminfo 1 : RommInfo
 	}
 }
 
-register 4 {
+enterroom 4 {
 	request {
-		account 0 : string
-		password 1 : string
-		extra 2 : binary
+	    roomid 0 : integer
 	}
 	response {
 		result 0 : integer
+		romminfo 1 : RommInfo
 	}
 }
 

@@ -1,0 +1,148 @@
+--[[
+1.每个服务直接关闭自己，不可以直接关闭别人
+post.close(notice)
+2.每个服务在创建和退出时，需要通知创建它的服务和它创建的服务
+req.onServerInit(node, registername, type, handle, data)
+req.onServerExit(node, registername, type, handle, data)
+3.本地服务属性
+registername
+type
+4.远程服务属性
+node
+registername
+type
+--]]
+
+local debug = {}
+
+local function temptemp(list, ttt, fff)
+    if list and list[ttt] then
+        if ttt == fff then
+            return true
+        end
+        for _, v in ipairs(list[ttt]) do
+            if v == fff or temptemp(list, v, fff) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function debug.dump(obj)
+    local getIndent, quoteStr, wrapKey, dumpObj
+    local dumpList = {}
+    getIndent = function(level)
+        return string.rep("\t", level)
+    end
+    quoteStr = function(str)
+        return '"' .. string.gsub(str, '"', '\\"') .. '"'
+    end
+    wrapKey = function(val)
+        if type(val) == "number" then
+            return "[" .. val .. "]"
+        elseif type(val) == "string" then
+            return "[" .. quoteStr(val) .. "]"
+        else
+            return "[" .. tostring(val) .. "]"
+        end
+    end
+    dumpObj = function(obj, level, father)
+        if type(obj) == "number" then
+            return obj
+        elseif type(obj) == "string" then
+            return quoteStr(obj)
+        elseif type(obj) == "table" then
+
+            local ttt = tostring(obj)
+            local fff = tostring(father)
+            --如果要打印的table出现在父节点中，则不打印，防止死循环
+            if temptemp(dumpList, ttt, fff) then
+                return "["..ttt.."]"
+            else
+                if not dumpList[ttt] then
+                    dumpList[ttt] = {}
+                end
+                dumpList[ttt][#dumpList[ttt] + 1] = fff
+
+                level = level + 1
+                local tokens = {}
+                tokens[#tokens + 1] = "["..ttt.."]".."{"
+                for k, v in pairs(obj) do
+                    tokens[#tokens + 1] = getIndent(level) .. wrapKey(k) .. " = " .. dumpObj(v, level, obj) .. ","
+                end
+                tokens[#tokens + 1] = getIndent(level - 1) .. "}"
+                return table.concat(tokens, "\n")
+            end
+        else
+            return tostring(obj)
+        end
+    end
+    return dumpObj(obj, 0)
+end
+
+function debug.dumpPrint(obj, p)
+    p = p or print
+    local getIndent, quoteStr, wrapKey, wrapValue, dumpObj
+    local dumpList = {}
+    getIndent = function(level)
+        return string.rep("\t", level)
+    end
+    quoteStr = function(str)
+        return '"' .. string.gsub(str, '"', '\\"') .. '"'
+    end
+    wrapKey = function(val)
+        if type(val) == "number" then
+            return "[" .. val .. "]"
+        elseif type(val) == "string" then
+            return "[" .. quoteStr(val) .. "]"
+        else
+            return "[" .. tostring(val) .. "]"
+        end
+    end
+    wrapValue = function(value, level, father)
+        if type(value) == "number" then
+            return value
+        elseif type(value) == "string" then
+            return quoteStr(value)
+        elseif type(value) == "table" then
+            return getIndent(level) .. "["..tostring(value).."]".."{"
+        else
+            return tostring(value)
+        end
+    end
+    dumpObj = function(obj, level, father)
+        if type(obj) == "table" then
+            local ttt = tostring(obj)
+            local fff = tostring(father)
+            --如果要打印的table出现在父节点中，则不打印，防止死循环
+            if temptemp(dumpList, ttt, fff) then
+                p("["..ttt.."]")
+            else
+                if not dumpList[ttt] then
+                    dumpList[ttt] = {}
+                end
+                dumpList[ttt][#dumpList[ttt] + 1] = fff
+
+                level = level + 1
+                for k, v in pairs(obj) do
+                    p(getIndent(level) .. wrapKey(k) .. " = " ..  wrapValue(v, level, father))
+                    if type(v) == "table" then
+                        dumpObj(v, level, obj)
+                    end
+                end
+                p(getIndent(level - 1) .. "}")
+            end
+            return
+        else
+            p(wrapValue(obj))
+        end
+    end
+
+    if type(obj) == "table" then
+        p(wrapValue(obj, 0))
+    end
+    dumpObj(obj, 0)
+end
+
+return debug

@@ -1,0 +1,140 @@
+local skynet = require("skynet")
+local snax = require("skynet.snax")
+local helper = require("helper")
+local sprotoloader = require "sprotoloader"
+local login = require("login.login")
+local servertype = require("common.servertype")
+
+local loginagent
+
+local function rpc(name, data, cb)
+    if loginagent and loginagent.request and loginagent.gateagent then
+        if cb then
+            local d = loginagent.request(name, data)
+            loginagent.gateagent.req.sendclient(d)
+        else
+            local s = #loginagent.response_lister + 1
+            local d = loginagent.request(name, data, s)
+            loginagent.gateagent.req.sendclient(d)
+            loginagent.response_lister[s] = {}
+            loginagent.response_lister[s].cb = cb
+            loginagent.response_lister[s].isenable = true
+        end
+    end
+end
+
+function init(data, handle, type)
+    snax.enablecluster()
+    loginagent = {}
+    loginagent.login = snax.bind(handle, type)
+    loginagent.db = snax.bind(data.dbhandle, data.dbtype)
+    loginagent.clientinfo = data.clientinfo
+    loginagent.node = helper.getLocalNodeName()
+    loginagent.registername = string.format("%s_%s_%d",
+            loginagent.node, snax.self().type, data.index)
+    loginagent.manager = helper.getUniqueMachineManager()
+
+    if data.gateagentinfo.node == loginagent.node then
+        loginagent.gateagent = snax.bind(data.gateagentinfo.handle,
+                data.gateagentinfo.type)
+    else
+        loginagent.gateagent = helper.getRemoteSnaxServer(
+                data.gateagentinfo.node,
+                data.gateagentinfo.registername,
+                data.gateagentinfo.type)
+    end
+
+    loginagent.host = sprotoloader.load(1):host "package"
+    loginagent.request = loginagent.host:attach(sprotoloader.load(2))
+    loginagent.response_lister = {}
+    loginagent.loginlogic = login.new(loginagent, rpc)
+    helper.registerRemoteSnaxServer(loginagent.registername)
+    loginagent.login.req.onServerInit(loginagent.node,
+            loginagent.registername, snax.self().type, snax.self().handle)
+    loginagent.gateagent.req.onServerInit(loginagent.node,
+            loginagent.registername, snax.self().type, snax.self().handle)
+    print("----------loginagent service init:", loginagent.registername)
+end
+
+function exit(notice, msg)
+    if notice then
+        loginagent.login.req.onServerExit(
+                loginagent.node,
+                loginagent.registername,
+                snax.self().type)
+        loginagent.gateagent.req.onServerExit(
+                loginagent.node,
+                loginagent.registername,
+                snax.self().type)
+        if loginagent.gameagent then
+            loginagent.gameagent.req.onServerExit(
+                    loginagent.node,
+                    loginagent.registername,
+                    snax.self().type)
+        end
+    end
+    helper.unregisterRemoteSnaxServer(loginagent.registername)
+    loginagent = nil
+    print("----------loginagent service exit:", notice, msg)
+end
+
+function  accept.close(notice, data)
+    snax.exit(notice, data)
+end
+
+function response.onServerInit(node, registername, type, handle, data)
+    assert(node)
+    assert(registername)
+    assert(type)
+
+    if type == servertype.gameagent then
+        assert(not loginagent.gameagent)
+        if node == loginagent.node then
+            loginagent.gameagent = snax.bind(handle, type)
+        else
+            loginagent.gameagent = helper.getRemoteSnaxServer(node,
+                    registername, type)
+        end
+    else
+        skynet.error("login agent onServerInit:", type)
+    end
+end
+
+function response.onServerExit(node, registername, type, data)
+    assert(node)
+    assert(registername)
+    assert(type)
+
+    if type == servertype.gameagent then
+        assert(loginagent.gameagent)
+        loginagent.gameagent = nil
+    else
+        skynet.error("login agent onServerExit:", type)
+    end
+end
+
+function response.message(msg)
+    if loginagent.host and loginagent.gateagent then
+        local type, name, data, cb = loginagent.host:dispatch(msg)
+        if type == "REQUEST" then
+            if loginagent.loginlogic and loginagent.loginlogic[name] then
+                local result = loginagent.loginlogic[name](data)
+                if cb then
+                    loginagent.gateagent.req.sendclient(cb(result))
+                end
+            end
+        elseif type == "RESPONSE" then
+            if loginagent.response_lister[name] then
+                if loginagent.response_lister[name].isenable then
+                    loginagent.response_lister[name].cb(data)
+                end
+            end
+        end
+    end
+end
+
+function response.checkToken(token)
+    if loginagent.loginlogic and loginagent.loginlogic.checkToken then
+        return loginagent.loginlogic.checkToken(token)
+    end
+end

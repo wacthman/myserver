@@ -1,0 +1,169 @@
+local skynet = require("skynet")
+local snax = require("skynet.snax")
+local cluster = require("skynet.cluster")
+local mysql = require "skynet.db.mysql"
+local helper = require("helper")
+local sprotoloader = require "sprotoloader"
+local loginproto = require "login.loginproto"
+local commonDebug = require("common.debug")
+local servertype = require("common.servertype")
+
+
+local login
+
+function init(index, handle, type)
+    snax.enablecluster()
+    login = {}
+    login.node = helper.getLocalNodeName()
+    assert(login.node)
+    login.registername = string.format("%s_%s_%d",
+            login.node, servertype.login, index)
+    login.manager = helper.getUniqueMachineManager()
+
+    login.machine = snax.bind(handle, type)
+    login.agent = {}
+    login.online_user = {}
+    helper.registerRemoteSnaxServer(login.registername)
+
+    --初始化登录db服务
+    login.db = helper.newSnaxServerEx(servertype.logindb,
+            index, snax.self().handle, snax.self().type)
+    login.db.post.connect()
+
+    --初始化协议
+    sprotoloader.save(loginproto.c2s, 1)
+    sprotoloader.save(loginproto.s2c, 2)
+
+    print("----------login service init:", login.registername)
+end
+
+function exit(notice)
+    print("----------login service exit:", notice)
+    if notice then
+        login.machine.req.onServerExit(
+                login.node,
+                login.registername,
+                snax.self().type)
+    end
+    if login.db then
+        login.db.post.close()
+    end
+    for _, v in pairs(login.agent) do
+        v.post.close()
+    end
+    helper.unregisterRemoteSnaxServer(login.registername)
+    login = nil
+end
+
+function response.onServerInit(node, registername, type, handle, data)
+    assert(node)
+    assert(registername)
+    assert(type)
+
+    if node == login.node then
+        if type == servertype.logindb then
+            login.machine.req.onServerInit(login.node,
+                    login.registername,
+                    snax.self().type, snax.self().handle)
+        elseif type == servertype.loginagent then
+            assert(not login.agent[registername])
+            login.agent[registername] = snax.bind(handle, type)
+        else
+            skynet.error("login onServerInit:", type)
+        end
+    else
+        skynet.error("login onServerInit:", type)
+    end
+end
+
+function response.onServerExit(node, registername, type, data)
+    assert(node)
+    assert(registername)
+    assert(type)
+
+    if node == login.node then
+        if type == servertype.loginagent then
+            assert(registername)
+            login.agent[registername] = nil
+        elseif type == servertype.loginagent then
+            assert(login.agent[registername])
+            login.agent[registername] = nil
+        else
+            skynet.error("login onServerExit:", type)
+        end
+    else
+        skynet.error("login onServerExit:", type)
+    end
+end
+
+function response.openagent(gateagentinfo, clientinfo)
+    assert(gateagentinfo)
+    assert(clientinfo)
+
+    local index = 0
+    for _, _ in pairs(login.agent) do
+        index = index + 1
+    end
+    index = index + 1
+
+    local data = {}
+    data.index = index
+    data.dbhandle = login.db.handle
+    data.dbtype = login.db.type
+    data.gateagentinfo = gateagentinfo
+    data.clientinfo = clientinfo
+    helper.newSnaxServerEx(servertype.loginagent, data)
+    return true
+end
+
+function response.closeagent(registername, msg)
+    assert(registername)
+    assert(login.agent[registername])
+
+    for subid, rn in pairs(login.online_user) do
+        if rn == registername then
+            login.online_user[subid] = nil
+            break
+        end
+    end
+
+    login.agent[registername].post.close(false, msg)
+    login.agent[registername] = nil
+end
+
+function response.getSubid(registername)
+    assert(registername)
+    assert(login.agent[registername])
+    local subid = #login.online_user + 1
+    login.online_user[subid] = registername
+    return subid
+end
+
+function response.clearSubid(subid, registername, handle, type)
+    assert(subid)
+    assert(registername)
+    assert(handle)
+    assert(type)
+
+    local rn = login.online_user[subid]
+    if rn and rn == registername then
+        local server = login.agent[rn]
+        if server then
+            return (server.handle == handle) and (server.type == type)
+        end
+    end
+    return false
+end
+
+function response.verificationSubid(subid, handle, type)
+    if subid and handle and type then
+        local registername = login.online_user[subid]
+        if registername then
+            local server = login.agent[registername]
+            if server then
+                return (server.handle == handle) and (server.type == type)
+            end
+        end
+    end
+    return false
+end

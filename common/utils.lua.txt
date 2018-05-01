@@ -1,50 +1,6 @@
 local utils = {}
 local skynet = require("skynet")
 
-function utils.dump(obj)
-    local getIndent, quoteStr, wrapKey, wrapVal, dumpObj
-    getIndent = function(level)
-        return string.rep("\t", level)
-    end
-    quoteStr = function(str)
-        return '"' .. string.gsub(str, '"', '\\"') .. '"'
-    end
-    wrapKey = function(val)
-        if type(val) == "number" then
-            return "[" .. val .. "]"
-        elseif type(val) == "string" then
-            return "[" .. quoteStr(val) .. "]"
-        else
-            return "[" .. tostring(val) .. "]"
-        end
-    end
-    wrapVal = function(val, level)
-        if type(val) == "table" then
-            return dumpObj(val, level)
-        elseif type(val) == "number" then
-            return val
-        elseif type(val) == "string" then
-            return quoteStr(val)
-        else
-            return tostring(val)
-        end
-    end
-    dumpObj = function(obj, level)
-        if type(obj) ~= "table" then
-            return wrapVal(obj)
-        end
-        level = level + 1
-        local tokens = {}
-        tokens[#tokens + 1] = "{"
-        for k, v in pairs(obj) do
-            tokens[#tokens + 1] = getIndent(level) .. wrapKey(k) .. " = " .. wrapVal(v, level) .. ","
-        end
-        tokens[#tokens + 1] = getIndent(level - 1) .. "}"
-        return table.concat(tokens, "\n")
-    end
-    return dumpObj(obj, 0)
-end
-
 local function ToStringEx(value)
     if type(value)=='table' then
         return utils.Table2String(value)
@@ -91,11 +47,30 @@ function utils.String2Table(s)
     if s == nil or type(s) ~= "string" then
         return
     end
-    local ok, result = pcall(loadstring("return " .. s))
+    local ok, result = pcall(load("return " .. s))
     if ok then
         return result
     else
         return nil
+    end
+end
+
+local lettermap = {
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F", "G",
+    "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W",
+    "X", "Y", "Z", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+    "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"
+}
+
+function utils.randomString(len)
+    if len > 0 then
+        math.randomseed(tostring(os.time()):reverse():sub(1, 7))
+        local str = {}
+        for i = 1, len do
+            local value = math.random(1, #lettermap)
+            str[i] = lettermap[value]
+        end
+        return table.concat(str, "")
     end
 end
 

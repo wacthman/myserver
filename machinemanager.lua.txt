@@ -1,0 +1,87 @@
+--[[
+机器管理服务：
+管理所有machine
+]]--
+local snax = require("skynet.snax")
+local helper = require("helper")
+local servertype = require("common.servertype")
+
+local machinemanager
+
+function init()
+    snax.enablecluster()
+    machinemanager = {}
+    machinemanager.machines = {}
+    machinemanager.node = helper.getLocalNodeName()
+    machinemanager.registername = string.format("%s_%s",
+            machinemanager.node, snax.self().type)
+    helper.registerRemoteSnaxServer(machinemanager.registername)
+    print("----------machine manager service init:",
+            machinemanager.registername)
+end
+
+function exit(notice)
+    for n, info in pairs(machinemanager.machines) do
+        info.server.req.onServerExit(
+                machinemanager.node,
+                machinemanager.registername,
+                snax.self().type)
+    end
+    helper.unregisterRemoteSnaxServer(machinemanager.registername)
+    machinemanager = nil
+    print("----------machine manager service exit:")
+end
+
+function  accept.close(notice, data)
+    snax.exit()
+end
+
+function response.onServerInit(node, registername, type, handle, data)
+    assert(node)
+    assert(registername)
+    assert(type)
+
+    if type == servertype.machine then
+        if not machinemanager.machines[node] then
+            machinemanager.machines[node] = {}
+        end
+        machinemanager.machines[node].registername = registername
+        machinemanager.machines[node].type = type
+        if handle and node == machinemanager.node then
+            machinemanager.machines[node].server = snax.bind(handle, type)
+        else
+            machinemanager.machines[node].server =
+            helper.getRemoteSnaxServer(node,
+                    registername, type)
+        end
+    else
+        --通知其他machine
+        for n, info in pairs(machinemanager.machines) do
+            if n ~= node then
+                info.server.req.onServerInit(node,
+                        registername, type, handle, data)
+            end
+        end
+    end
+    print("machinemanager onServerInit:", node, registername, type)
+end
+
+function response.onServerExit(node, registername, type, data)
+    assert(node)
+    assert(registername)
+    assert(type)
+
+    if type == servertype.machine then
+        assert(machinemanager.machines[node])
+        machinemanager.machines[node] = nil
+    end
+
+    --通知其他machine
+    for n, info in pairs(machinemanager.machines) do
+        if n ~= node then
+            info.server.req.onServerExit(node, registername, type, data)
+        end
+    end
+
+    print("machinemanager onServerExit:", node, registername)
+end

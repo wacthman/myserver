@@ -1,0 +1,124 @@
+local skynet = require("skynet")
+local snax = require("skynet.snax")
+local cluster = require("skynet.cluster")
+local helper = require("helper")
+local servertype = require("common.servertype")
+local sprotoloader = require "sprotoloader"
+local gameproto = require "game.gameproto"
+local game
+
+function init(index, handle, type)
+    snax.enablecluster()
+    game = {}
+    game.manager = helper.getUniqueMachineManager()
+    game.node = helper.getLocalNodeName()
+    game.registername = string.format("%s_%s_%d",
+            game.node, snax.self().type, index)
+    game.machine = snax.bind(handle, type)
+    game.agent = {}
+    helper.registerRemoteSnaxServer(game.registername)
+
+    --初始化登录db服务
+    game.db = helper.newSnaxServerEx(servertype.gamedb, index)
+    game.db.post.connect()
+
+    --初始化协议
+    sprotoloader.save(gameproto.c2s, 3)
+    sprotoloader.save(gameproto.s2c, 4)
+    print("----------game service init:", game.registername)
+end
+
+function exit(notice)
+    print("----------game service exit:", notice)
+    if notice then
+        game.machine.req.onServerExit(game.node,
+                game.registername,
+                snax.self().type)
+    end
+    if game.db then
+        game.db.post.close()
+    end
+    for _, v in pairs(game.agent) do
+        v.post.close()
+    end
+    helper.unregisterRemoteSnaxServer(game.registername)
+    game = nil
+end
+
+function  accept.close(notice, data)
+    snax.exit(notice, data)
+end
+
+function response.onServerInit(node, registername, type, handle, data)
+    assert(node)
+    assert(registername)
+    assert(type)
+
+    if node == game.node then
+        if type == servertype.gamedb then
+            --这里表示初始化完毕
+            game.machine.req.onServerInit(game.node,
+                    game.registername,
+                    snax.self().type, snax.self().handle)
+        elseif type == servertype.gameagent then
+            assert(registername)
+            assert(not game.agent[registername])
+            game.agent[registername] = snax.bind(handle, type)
+        else
+            skynet.error("game onServerInit:", type)
+        end
+    else
+        skynet.error("game onServerInit:", type)
+    end
+
+end
+
+function response.onServerExit(node, registername, type, data)
+    assert(node)
+    assert(registername)
+    assert(type)
+
+    if node == game.node then
+        if type == servertype.gameagent then
+            assert(registername)
+            game.agent[registername] = nil
+        else
+            skynet.error("game onServerExit:", type)
+        end
+    else
+        skynet.error("game onServerExit:", type)
+    end
+
+end
+
+function response.openagent(gateagentinfo,
+                            clientinfo,
+                            loginagentinfo)
+    assert(gateagentinfo)
+    assert(clientinfo)
+    assert(loginagentinfo)
+
+    local index = 0
+    for _, _ in pairs(game.agent) do
+        index = index + 1
+    end
+    index = index + 1
+
+    local data = {}
+    data.index = index
+    data.dbhandle = game.db.handle
+    data.dbtype = game.db.type
+    data.gateagentinfo = gateagentinfo
+    data.clientinfo = clientinfo
+    data.loginagentinfo = loginagentinfo
+    helper.newSnaxServerEx(servertype.gameagent, data)
+    return true
+end
+
+function response.closeagent(registername, msg)
+    assert(registername)
+    assert(game.agent[registername])
+
+    game.agent[registername].post.close(false, msg)
+    game.agent[registername] = nil
+end

@@ -1,0 +1,83 @@
+local skynet = require "skynet"
+local snax = require("skynet.snax")
+local socket = require "skynet.socket"
+local cluster = require("skynet.cluster")
+local helper = require("helper")
+local scriptnames = require("common.scriptnames")
+
+local wsgate
+
+function init(registername, scriptname, handle, type)
+    --snax.enablecluster()
+    assert(handle)
+    assert(type)
+    wsgate = {}
+    wsgate.manager = helper.getUniqueMachineManager()
+    wsgate.machine = snax.bind(handle, type)
+    wsgate.node = helper.getLocalNodeName()
+    wsgate.registername = registername
+    wsgate.scriptname = scriptname
+
+    wsgate.address = "0.0.0.0"
+    wsgate.port = 20013
+    wsgate.maxclient = 1024
+    wsgate.client_number = 0
+    wsgate.nodelay = false
+    wsgate.agents = {}
+    wsgate.socket = socket.listen(wsgate.address, wsgate.port)
+
+    socket.start(wsgate.socket, function(fd, addr)
+        if wsgate.client_number >= wsgate.maxclient then
+            socket.close(fd)
+            return
+        end
+        assert(not wsgate.agents[fd])
+        wsgate.agents[fd] = snax.newservice(scriptnames.wsgateagent,
+                fd, addr,
+                handle,
+                type,
+                snax.self().handle,
+                snax.self().type)
+        wsgate.client_number = wsgate.client_number + 1
+        wsgate.agents[fd].post.open()
+    end)
+    print("----------wsgate service init:", handle, type)
+end
+
+function exit(notice)
+    print("----------wsgate service exit:", notice)
+    if notice then
+        wsgate.machine.post.onLocalServerExit(
+                wsgate.registername,
+                wsgate.scriptname)
+    end
+
+    if wsgate.socket then
+        socket.close(wsgate.socket)
+    end
+    if wsgate.agents then
+        for _, v in pairs(wsgate.agents) do
+            v.post.close()
+        end
+    end
+
+    wsgate = nil
+end
+
+local function close_fd(fd)
+    if wsgate.agents[fd] then
+        wsgate.client_number = wsgate.client_number - 1
+        wsgate.agents[fd].post.close()
+        wsgate.agents[fd] = nil
+    end
+end
+
+function accept.closeclient(fd)
+    close_fd(fd)
+end
+
+function accept.close(notice, data)
+    socket.close(wsgate.socket)
+    wsgate.socket = nil
+    snax.exit(notice)
+end

@@ -1,0 +1,19 @@
+local scriptnames = {}
+
+scriptnames = {}
+scriptnames.machinemanager = "machinemanager"
+scriptnames.machine = "machine"
+scriptnames.gate = "gate"
+scriptnames.gateagent = "gateagent"
+scriptnames.login = "login"
+scriptnames.loginagent = "loginagent"
+scriptnames.logindb = "logindb"
+scriptnames.game = "game"
+scriptnames.gameagent = "gameagent"
+scriptnames.gamedb = "gamedb"
+scriptnames.wsgate = "wsgate"
+scriptnames.wsgateagent = "wsgateagent"
+scriptnames.room = "game/room"
+scriptnames.roomagent = "game/roomagent"
+
+return scriptnames

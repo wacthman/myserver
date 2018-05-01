@@ -1,0 +1,179 @@
+--[[
+机器服务：
+每个进程上只有一个
+监视硬件
+创建其他服务
+监视其他服务
+被manager管理
+关闭进程
+]]--
+local skynet = require("skynet")
+local snax = require("skynet.snax")
+local cluster = require("skynet.cluster")
+local helper = require("helper")
+local servertype = require("common.servertype")
+
+local machine
+
+function init(managerhandle, managertype)
+    snax.enablecluster()
+    machine = {}
+    machine.servers = {}
+    machine.node = helper.getLocalNodeName()
+    assert(machine.node)
+    machine.registername = string.format("%s_%s",
+            machine.node, snax.self().type)
+    machine.ip = helper.getLocalNodeIP()
+    machine.manager = helper.getUniqueMachineManager(
+            managerhandle,
+            managertype)
+    assert(machine.manager)
+    helper.registerRemoteSnaxServer(machine.registername)
+    machine.manager.req.onServerInit(machine.node,
+            machine.registername,
+            snax.self().type,
+            snax.self().handle)
+    print("----------machine service init:", machine.registername)
+end
+
+function exit(notice)
+    if notice then
+        machine.manager.req.onServerExit(machine.node,
+                machine.registername,
+                snax.self().type)
+    end
+
+    if machine.servers[machine.node] then
+        --关闭本节点下的所有服务
+        for _, v in pairs(machine.servers[machine.node]) do
+            v.post.close()
+        end
+    end
+
+    helper.unregisterRemoteSnaxServer(machine.registername)
+    machine = nil
+    print("----------machine service exit")
+end
+
+local function pushserver(node, registername, type, server)
+    assert(node)
+    assert(registername)
+    assert(type)
+    if not server then
+        server = helper.getRemoteSnaxServer(node, registername, type)
+    end
+    assert(server)
+    if not machine.servers[node] then
+        machine.servers[node] = {}
+    end
+    if not machine.servers[node][type] then
+        machine.servers[node][type] = {}
+    end
+    machine.servers[node][type][registername] = server
+end
+
+local function popserver(node, registername, type)
+    assert(node)
+    assert(registername)
+    assert(type)
+    assert(machine.servers[node])
+    assert(machine.servers[node][type])
+    local server = machine.servers[node][type][registername]
+    machine.servers[node][type][registername] = nil
+    return server
+end
+
+--清理某machine下的所有服务
+local function clearserver(node)
+    assert(node)
+    machine.servers[node] = nil
+end
+
+local function getserver(node, registername, type)
+    assert(node)
+    assert(registername)
+    assert(type)
+    if machine.servers[node] and
+            machine.servers[node][type] then
+        return machine.servers[node][type][registername]
+    end
+end
+
+local function getservers(node, type)
+    assert(node)
+    assert(type)
+
+    if machine.servers[node] then
+        return machine.servers[node][type]
+    end
+end
+
+function response.createServer(servername)
+    --gate,login,game
+    assert(servername)
+    local index = 0
+    if machine.servers[machine.node] and
+            machine.servers[machine.node][servername] then
+        for k, v in pairs(machine.servers[machine.node][servername]) do
+            index = index + 1
+        end
+    end
+    index = index + 1
+
+    helper.newSnaxServerEx(servername, index)
+end
+
+function response.getServer(othernode, type)
+    --servername 与 scriptname 应该是相同的
+    --优先返回相同节点的服务
+
+    local servers = getservers(othernode, type)
+    if servers then
+        for k, v in pairs(servers) do
+            return true, othernode, k, type, v.handle
+        end
+    end
+
+    return false
+end
+
+function  accept.close(notice, data)
+    snax.exit(notice, data)
+end
+
+function response.onServerInit(node, registername, type, handle, data)
+    assert(node)
+    assert(registername)
+    assert(type)
+    if node == machine.node then
+        local server
+        if handle then
+            server = snax.bind(handle, type)
+        end
+        pushserver(node, registername, type, server)
+        --本机服务需上线时，需要通知manager，由manager通知给其他machine
+        machine.manager.req.onServerInit(node, registername, type, handle, data)
+    else
+        pushserver(node, registername, type)
+    end
+end
+
+function response.onServerExit(node, registername, type, data)
+    assert(node)
+    assert(registername)
+    assert(type)
+
+    if node == machine.node then
+        popserver(node, registername, type)
+        --本机服务需下线时，需要通知manager，由manager通知给其他machine
+        machine.manager.req.onServerExit(node, registername, type, data)
+    else
+        if servertype == servertype.machinemanager then
+            snax.exit()
+        elseif type == servertype.machine then
+            clearserver(node)
+        else
+            popserver(node, registername, type)
+        end
+    end
+end
